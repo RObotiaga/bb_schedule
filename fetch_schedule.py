@@ -132,7 +132,7 @@ async def process_faculty_folders(page):
 async def main():
     ensure_download_dir()
     async with async_playwright() as p:
-        browser = await p.chromium.launch(headless=False)
+        browser = await p.chromium.launch(headless=True)
         context = await browser.new_context(accept_downloads=True)
         page = await context.new_page() 
         try:
