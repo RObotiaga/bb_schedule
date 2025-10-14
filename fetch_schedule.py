@@ -4,8 +4,8 @@ import re # <-- Добавлен импорт
 from urllib.parse import urljoin, unquote
 from playwright.async_api import async_playwright, TimeoutError as PlaywrightTimeout
 
-LOGIN = os.getenv("BB_LOGIN", "AVSofronov")
-PASSWORD = os.getenv("BB_PASSWORD", "rW2qsFW4LirpH_J")
+LOGIN = os.getenv("BB_LOGIN")
+PASSWORD = os.getenv("BB_PASSWORD")
 BB_URL = "https://bb.usurt.ru/"
 DOWNLOAD_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "schedules"))
 
