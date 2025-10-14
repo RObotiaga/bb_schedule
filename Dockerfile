@@ -33,7 +33,7 @@ RUN useradd -m -s /bin/bash -u ${UID} appuser
 RUN pip install uv && \
     uv pip install --system playwright && \
     playwright install --with-deps && \
-    uv pip uninstall playwright
+    uv pip uninstall --system playwright
 
 # Копируем готовое виртуальное окружение из этапа "builder"
 ENV VENV_PATH=/opt/venv
