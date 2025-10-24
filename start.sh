@@ -15,12 +15,6 @@ if [ ! -f .env ]; then
     exit 1
 fi
 
-# 2. Проверка и создание директории для расписаний на хосте
-if [ ! -d "schedules" ]; then
-    echo -e "${YELLOW}Директория 'schedules' не найдена. Создаю...${NC}"
-    mkdir schedules
-fi
-
 # 3. Остановка и удаление старого контейнера
 echo "Проверяем наличие старого контейнера..."
 if [ $(podman ps -a -q -f name=^/${CONTAINER_NAME}$) ]; then
