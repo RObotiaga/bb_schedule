@@ -63,42 +63,23 @@ def parse_lesson_cell(cell_content):
         
     return {"subject": subject + subgroup_info, "teacher": teacher, "location": location}
 
-def create_db_tables(conn):
-    """Создает структуру таблиц в базе данных."""
-    cursor = conn.cursor()
-    cursor.execute("""
-    CREATE TABLE IF NOT EXISTS schedule (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        group_name TEXT NOT NULL,
-        lesson_date TEXT NOT NULL,
-        time TEXT NOT NULL,
-        subject TEXT NOT NULL,
-        teacher TEXT NOT NULL,
-        location TEXT NOT NULL,
-        week_type TEXT,
-        faculty TEXT,
-        course TEXT
-    )
-    """)
-    cursor.execute("CREATE INDEX IF NOT EXISTS idx_group_date ON schedule (group_name, lesson_date)")
-    cursor.execute("CREATE INDEX IF NOT EXISTS idx_teacher_date ON schedule (teacher, lesson_date)")
-    conn.commit()
 
 # --- ОСНОВНАЯ ЛОГИКА ---
 def main():
     """
-    Главная функция: полностью пересоздает базу данных schedule.db,
+    Главная функция: обновляет данные в существующей базе данных schedule.db,
     парсит все XLS файлы и наполняет ее свежими данными.
     """
-    # --- ЛОГИКА ПОЛНОГО ОБНОВЛЕНИЯ ---
-    # Удаляем старую БД, чтобы гарантировать 100% свежесть данных
-    if os.path.exists(DB_PATH):
-        print(f"Удаление старой базы данных '{os.path.basename(DB_PATH)}'...")
-        os.remove(DB_PATH)
-    # ------------------------------------
-        
+    # Подключаемся к базе данных. 
+    # bot.py ее уже создал, так что она должна существовать.
     conn = sqlite3.connect(DB_PATH)
-    create_db_tables(conn)
+    cursor = conn.cursor()
+
+    # ВМЕСТО УДАЛЕНИЯ ФАЙЛА, ДОБАВЬТЕ ЭТИ СТРОКИ:
+    print("Очистка старых данных из таблицы 'schedule'...")
+    cursor.execute("DELETE FROM schedule;")
+    conn.commit()
+    # Теперь таблица schedule пуста, но сама БД и таблица users на месте.
     
     all_lessons_to_insert = []
 
@@ -178,7 +159,6 @@ def main():
         return
 
     print(f"\nЗапись {len(all_lessons_to_insert)} пар в базу данных...")
-    cursor = conn.cursor()
     cursor.executemany("""
     INSERT INTO schedule (group_name, lesson_date, time, subject, teacher, location, week_type, faculty, course)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -186,7 +166,7 @@ def main():
     conn.commit()
     conn.close()
     
-    print(f"\nГотово! База данных '{os.path.basename(DB_PATH)}' успешно создана и наполнена с нуля.")
+    print(f"\nГотово! База данных '{os.path.basename(DB_PATH)}' успешно обновлена.")
 
 if __name__ == "__main__":
     main()
