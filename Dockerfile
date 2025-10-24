@@ -1,64 +1,62 @@
 # --- ЭТАП 1: "builder" ---
-# На этом этапе мы устанавливаем все зависимости в виртуальное окружение.
+# Устанавливаем все зависимости в одно чистое виртуальное окружение.
 FROM python:3.13-slim as builder
 
-# Устанавливаем uv - быстрый установщик пакетов
+# Устанавливаем uv
 RUN pip install uv
 
-# Создаём виртуальное окружение с помощью uv
+# Создаём и указываем путь к виртуальному окружению
 ENV VENV_PATH=/opt/venv
 RUN uv venv $VENV_PATH
 
-# Копируем файлы с зависимостями
+# Устанавливаем зависимости с помощью uv.
+# Копируем только необходимые файлы, чтобы не нарушать кэш Docker
 WORKDIR /app
 COPY pyproject.toml requirements.txt ./
 
-# Активируем venv и устанавливаем зависимости с помощью uv.
-# uv автоматически обработает зависимости из обоих файлов.
-RUN . $VENV_PATH/bin/activate && \
-    uv pip install --no-cache -r requirements.txt && \
-    uv pip install --no-cache .
+# uv может установить всё из pyproject.toml, включая зависимости из requirements.txt,
+# если они там указаны. Для простоты установим всё в одну команду.
+# Используем полный путь к uv в venv для большей надёжности.
+RUN ${VENV_PATH}/bin/uv pip install --no-cache -r requirements.txt .
 
 
 # --- ЭТАП 2: Финальный образ ---
-# Здесь мы создаём чистый образ, копируя только необходимое из "builder".
+# Создаём чистый образ, копируя только необходимое из "builder".
 FROM python:3.13-slim
+
+# Задаём путь к venv и сразу добавляем его в PATH.
+# Это позволит нам вызывать `python` и `playwright` напрямую в последующих командах.
+ENV VENV_PATH=/opt/venv
+ENV PATH="${VENV_PATH}/bin:${PATH}"
+
+# Копируем готовое виртуальное окружение из этапа "builder"
+COPY --from=builder ${VENV_PATH} ${VENV_PATH}
+
+# Устанавливаем браузеры Playwright и их СИСТЕМНЫЕ зависимости.
+# Скрипт использует только Chromium, поэтому устанавливаем только его для экономии места.
+# Эта команда выполняется от имени root, что необходимо для `apt-get`.
+RUN playwright install --with-deps chromium
 
 # Создаём пользователя без root-прав для безопасности
 ARG UID=1001
 RUN useradd -m -s /bin/bash -u ${UID} appuser
 
-# Устанавливаем системные зависимости, необходимые для Playwright (используется в fetch_schedule.py)
-# Для этого временно ставим Playwright, устанавливаем зависимости и сразу удаляем.
-RUN pip install uv && \
-    uv pip install --system playwright && \
-    playwright install --with-deps && \
-    uv pip uninstall --system playwright
-
-# Копируем готовое виртуальное окружение из этапа "builder"
-ENV VENV_PATH=/opt/venv
-COPY --from=builder ${VENV_PATH} ${VENV_PATH}
-
 # Устанавливаем рабочую директорию
 WORKDIR /app
 
-# Копируем исходный код приложения и назначаем владельцем нашего пользователя
+# Копируем исходный код приложения
 COPY --chown=appuser:appuser . .
+
+# Создаём директорию для расписаний и назначаем владельцем нашего пользователя
+RUN mkdir schedules && chown appuser:appuser schedules
 
 # Переключаемся на пользователя без root-прав
 USER appuser
 
-# Добавляем venv в PATH, чтобы команды (python, playwright) были доступны напрямую
-ENV PATH="${VENV_PATH}/bin:${PATH}"
-
-# Создаём директорию для скачанных расписаний, чтобы с ней можно было связать том (volume)
-RUN mkdir schedules
-
-# Переменные окружения для работы бота.
-# Их нужно будет передать при запуске контейнера.
+# Переменные окружения для работы бота (будут переданы при запуске)
 ENV TELEGRAM_BOT_TOKEN=""
 ENV BB_LOGIN=""
 ENV BB_PASSWORD=""
 
-# Команда для запуска бота при старте контейнера
+# Команда для запуска приложения
 CMD ["python", "bot.py"]
