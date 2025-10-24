@@ -42,46 +42,85 @@ class CourseCallbackFactory(CallbackData, prefix="course"):
     course_id: int
     faculty_id: int
 
-# --- Функции для работы с базой данных ---
+# --- Функции для работы с базой данных (ИСПРАВЛЕННАЯ ВЕРСИЯ) ---
 def get_db_connection():
+    # Создаем директорию для БД, если ее нет
+    os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
     return conn
 
-def load_structure_from_db():
-    """Загружает структуру меню И список преподавателей из БД."""
-    global structured_data, FACULTIES_LIST, ALL_TEACHERS_LIST
-    if not os.path.exists(DB_PATH):
-        logging.error(f"База данных '{DB_PATH}' не найдена! Запустите process_schedules.py.")
-        return False
-    
+def initialize_database():
+    """
+    Создает все необходимые таблицы в БД, если они не существуют.
+    Эта функция должна вызываться один раз при старте бота.
+    """
     conn = get_db_connection()
     cursor = conn.cursor()
     
-    # Загрузка структуры
-    cursor.execute("SELECT DISTINCT faculty, course, group_name FROM schedule ORDER BY faculty, course, group_name")
-    rows = cursor.fetchall()
-    temp_structured_data = {}
-    for row in rows:
-        faculty, course, group_name = row['faculty'], row['course'], row['group_name']
-        if faculty not in temp_structured_data: temp_structured_data[faculty] = {}
-        if course not in temp_structured_data[faculty]: temp_structured_data[faculty][course] = []
-        if group_name not in temp_structured_data[faculty][course]: temp_structured_data[faculty][course].append(group_name)
-    structured_data = temp_structured_data
-    FACULTIES_LIST = sorted(structured_data.keys())
+    # Создаем таблицу для пользователей
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS users (
+            user_id INTEGER PRIMARY KEY, 
+            group_name TEXT
+        )
+    """)
     
-    # ИЗМЕНЕНИЕ: Загрузка списка преподавателей
-    cursor.execute("SELECT DISTINCT teacher FROM schedule WHERE teacher != 'Не указан'")
-    ALL_TEACHERS_LIST = sorted([row['teacher'] for row in cursor.fetchall()])
+    # Создаем таблицу для расписания
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS schedule (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            faculty TEXT,
+            course TEXT,
+            group_name TEXT,
+            week_type TEXT,
+            lesson_date TEXT,
+            time TEXT,
+            subject TEXT,
+            teacher TEXT,
+            location TEXT
+        )
+    """)
     
+    conn.commit()
     conn.close()
-    logging.info(f"Структура меню и {len(ALL_TEACHERS_LIST)} преподавателей успешно загружены из БД.")
-    return True
+    logging.info("База данных успешно инициализирована (таблицы users и schedule проверены/созданы).")
 
-def init_user_db():
+def load_structure_from_db():
+    """Загружает структуру меню И список преподавателей из БД."""
+    global structured_data, FACULTIES_LIST, ALL_TEACHERS_LIST
+    
+    # Теперь эта проверка не вызовет ошибку, т.к. файл и таблица уже созданы
     conn = get_db_connection()
-    conn.execute("CREATE TABLE IF NOT EXISTS users (user_id INTEGER PRIMARY KEY, group_name TEXT)")
-    conn.commit(); conn.close()
+    cursor = conn.cursor()
+    
+    try:
+        # Загрузка структуры
+        cursor.execute("SELECT DISTINCT faculty, course, group_name FROM schedule ORDER BY faculty, course, group_name")
+        rows = cursor.fetchall()
+        temp_structured_data = {}
+        for row in rows:
+            faculty, course, group_name = row['faculty'], row['course'], row['group_name']
+            if faculty not in temp_structured_data: temp_structured_data[faculty] = {}
+            if course not in temp_structured_data[faculty]: temp_structured_data[faculty][course] = []
+            if group_name not in temp_structured_data[faculty][course]: temp_structured_data[faculty][course].append(group_name)
+        structured_data = temp_structured_data
+        FACULTIES_LIST = sorted(structured_data.keys())
+        
+        # Загрузка списка преподавателей
+        cursor.execute("SELECT DISTINCT teacher FROM schedule WHERE teacher IS NOT NULL AND teacher != 'Не указан'")
+        ALL_TEACHERS_LIST = sorted([row['teacher'] for row in cursor.fetchall()])
+        
+        logging.info(f"Структура меню ({len(FACULTIES_LIST)} факультетов) и {len(ALL_TEACHERS_LIST)} преподавателей успешно загружены из БД.")
+        return True
+
+    except sqlite3.OperationalError as e:
+        logging.error(f"Ошибка при загрузке структуры из БД: {e}. Возможно, таблица 'schedule' пуста.")
+        # Очищаем структуры, если загрузка не удалась
+        structured_data, FACULTIES_LIST, ALL_TEACHERS_LIST = {}, [], []
+        return False
+    finally:
+        conn.close()
 
 def save_user_group_db(user_id: int, group_name: str | None):
     conn = get_db_connection()
@@ -96,9 +135,9 @@ def get_user_group_db(user_id: int) -> str | None:
     conn.close()
     return row['group_name'] if row else None
 
-# --- Первичная инициализация ---
-init_user_db()
-load_structure_from_db()
+# --- Первичная инициализация (ИСПРАВЛЕННАЯ ВЕРСИЯ) ---
+initialize_database()  # <-- СНАЧАЛА создаем таблицы
+load_structure_from_db() # <-- ПОТОМ безопасно загружаем данные
 
 # --- FSM, Фильтры, Клавиатуры ---
 class TeacherSearch(StatesGroup): name, matches = State(), State()
