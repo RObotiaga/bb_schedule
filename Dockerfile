@@ -34,6 +34,7 @@ COPY --from=builder ${VENV_PATH} ${VENV_PATH}
 # Устанавливаем браузеры Playwright и их СИСТЕМНЫЕ зависимости.
 # Скрипт использует только Chromium, поэтому устанавливаем только его для экономии места.
 RUN playwright install --with-deps chromium
+RUN uv run playwright install --with-deps chromium
 
 # Создаём пользователя без root-прав для безопасности
 ARG UID=1001
