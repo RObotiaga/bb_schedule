@@ -8,8 +8,16 @@ import sqlite3
 from datetime import date, timedelta
 from typing import List
 
+# --- ИЗМЕНЕНИЕ: Новые импорты для обработки ошибок ---
+import traceback
+from aiogram.types.error_event import ErrorEvent
+# --- Конец изменения ---
+
+import pytz
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
+
 from aiogram import Bot, Dispatcher, F, types
-from aiogram.filters import CommandStart, BaseFilter
+from aiogram.filters import CommandStart, BaseFilter, Command
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.storage.memory import MemoryStorage
@@ -81,10 +89,19 @@ def initialize_database():
             location TEXT
         )
     """)
+
+    # --- ИЗМЕНЕНИЕ: Новая таблица для логирования рассылок ---
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS broadcast_log (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            sent_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            message_ids_json TEXT
+        )
+    """)
     
     conn.commit()
     conn.close()
-    logging.info("База данных успешно инициализирована (таблицы users и schedule проверены/созданы).")
+    logging.info("База данных успешно инициализирована (таблицы users, schedule и broadcast_log проверены/созданы).")
 
 def load_structure_from_db():
     """Загружает структуру меню И список преподавателей из БД."""
@@ -135,12 +152,52 @@ def get_user_group_db(user_id: int) -> str | None:
     conn.close()
     return row['group_name'] if row else None
 
+# --- ИЗМЕНЕНИЕ: Функции для рассылки ---
+def get_all_user_ids() -> List[int]:
+    """Возвращает список ID всех пользователей."""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT user_id FROM users")
+    rows = cursor.fetchall()
+    conn.close()
+    return [row['user_id'] for row in rows]
+
+def log_broadcast(message_ids: list):
+    """Сохраняет ID всех отправленных сообщений в лог."""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("INSERT INTO broadcast_log (message_ids_json) VALUES (?)", (json.dumps(message_ids),))
+    conn.commit()
+    conn.close()
+
+def get_last_broadcast() -> List[tuple] | None:
+    """Извлекает ID сообщений последней рассылки."""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT message_ids_json FROM broadcast_log ORDER BY id DESC LIMIT 1")
+    row = cursor.fetchone()
+    conn.close()
+    return json.loads(row['message_ids_json']) if row else None
+
+def delete_last_broadcast_log() -> bool:
+    """Удаляет запись о последней рассылке из лога."""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT id FROM broadcast_log ORDER BY id DESC LIMIT 1")
+    row = cursor.fetchone()
+    if row:
+        cursor.execute("DELETE FROM broadcast_log WHERE id = ?", (row['id'],))
+        conn.commit()
+    conn.close()
+    return row is not None
+
 # --- Первичная инициализация (ИСПРАВЛЕННАЯ ВЕРСИЯ) ---
 initialize_database()  # <-- СНАЧАЛА создаем таблицы
 load_structure_from_db() # <-- ПОТОМ безопасно загружаем данные
 
 # --- FSM, Фильтры, Клавиатуры ---
 class TeacherSearch(StatesGroup): name, matches = State(), State()
+class Broadcast(StatesGroup): waiting_for_message = State() # <-- ИЗМЕНЕНИЕ: Новое состояние
 class IsAdmin(BaseFilter):
     async def __call__(self, message: Message) -> bool: return message.from_user.id == ADMIN_ID
 
@@ -177,14 +234,20 @@ def get_teacher_nav_keyboard(current_offset: int):
     builder.button(text="След. день ➡️", callback_data=f"teacher_nav:{current_offset + 1}")
     return builder.as_markup()
 day_selection_keyboard = ReplyKeyboardMarkup(keyboard=[[KeyboardButton(text="Сегодня"), KeyboardButton(text="Завтра")], [KeyboardButton(text="Пн"), KeyboardButton(text="Вт"), KeyboardButton(text="Ср")], [KeyboardButton(text="Чт"), KeyboardButton(text="Пт"), KeyboardButton(text="Сб")], [KeyboardButton(text="/start")]], resize_keyboard=True)
-admin_keyboard = ReplyKeyboardMarkup(keyboard=[[KeyboardButton(text="🔄 Обновить расписание"), KeyboardButton(text="📥 Перезагрузить структуру")], [KeyboardButton(text="⬅️ Выйти из админ-панели")]], resize_keyboard=True)
+# --- ИЗМЕНЕНИЕ: Новые кнопки у админа ---
+admin_keyboard = ReplyKeyboardMarkup(keyboard=[
+    [KeyboardButton(text="🔄 Обновить расписание"), KeyboardButton(text="📥 Перезагрузить структуру")],
+    [KeyboardButton(text="Написать всем"), KeyboardButton(text="Удалить последнее")],
+    [KeyboardButton(text="⬅️ Выйти из админ-панели")]
+], resize_keyboard=True)
 
 # --- Хэндлеры ---
 dp = Dispatcher(storage=MemoryStorage())
 
 @dp.message(CommandStart())
 async def send_welcome(message: Message):
-    save_user_group_db(message.from_user.id, None)
+    # Добавляем пользователя в БД при старте, если его там нет
+    save_user_group_db(message.from_user.id, get_user_group_db(message.from_user.id))
     await message.answer("👋 Добро пожаловать! Я помогу вам узнать расписание.\n\n"
                          "Для поиска по группе - выберите ваш факультет.\n"
                          "Для поиска по преподавателю - просто напишите его фамилию.",
@@ -336,7 +399,7 @@ async def navigate_teacher_schedule(callback: CallbackQuery, state: FSMContext):
         await callback.message.edit_text("Ваш выбор преподавателя истек. Начните поиск заново."); return
     await show_teacher_schedule(callback, teacher_name, day_offset)
 
-KNOWN_BUTTONS = {"Сегодня", "Завтра", "Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "🔄 Обновить расписание", "📥 Перезагрузить структуру", "⬅️ Выйти из админ-панели"}
+KNOWN_BUTTONS = {"Сегодня", "Завтра", "Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "🔄 Обновить расписание", "📥 Перезагрузить структуру", "⬅️ Выйти из админ-панели", "Написать всем", "Удалить последнее"}
 @dp.message(F.text, ~F.text.in_(KNOWN_BUTTONS), ~F.text.startswith('/'))
 async def find_teacher_by_name(message: Message, state: FSMContext):
     """Ищет преподавателя по фамилии в списке, загруженном в память."""
@@ -355,8 +418,8 @@ async def find_teacher_by_name(message: Message, state: FSMContext):
     await state.update_data(matches=matches)
     await message.answer("Найдено несколько преподавателей. Пожалуйста, выберите:", reply_markup=get_teacher_choices_keyboard(matches))
 
-# --- Хэндлеры Администратора (без изменений) ---
-@dp.message(F.text == "/admin", IsAdmin())
+# --- Хэндлеры Администратора ---
+@dp.message(Command("admin"), IsAdmin())
 async def admin_panel(message: Message):
     await message.answer("Добро пожаловать в админ-панель!", reply_markup=admin_keyboard)
 
@@ -372,16 +435,30 @@ async def run_script(command: list, message: Message):
         await message.answer(error_message[:4096], parse_mode="Markdown"); return False
     return True
 
+# --- ИЗМЕНЕНИЕ: Логика обновления вынесена в отдельную функцию ---
+async def _run_update_flow() -> (bool, str):
+    """Запускает скрипты обновления и перезагружает структуру. Возвращает (успех, сообщение)."""
+    python_executable = sys.executable
+    for script_name in ["fetch_schedule.py", "process_schedules.py"]:
+        process = await asyncio.create_subprocess_exec(
+            python_executable, script_name,
+            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
+        )
+        _, stderr = await process.communicate()
+        if process.returncode != 0:
+            error_details = stderr.decode('utf-8', errors='ignore')
+            return False, f"❌ Ошибка выполнения `{script_name}`:\n`{error_details}`"
+
+    if not load_structure_from_db():
+        return False, "❌ Ошибка: не удалось перезагрузить структуру из БД после обновления."
+
+    return True, "✅ Полное обновление успешно завершено!"
+
 @dp.message(F.text == "🔄 Обновить расписание", IsAdmin())
 async def update_schedule(message: Message):
-    await message.answer("🚀 Начинаю полное обновление...", reply_markup=types.ReplyKeyboardRemove())
-    python_executable = sys.executable
-    if await run_script([python_executable, "fetch_schedule.py"], message) and \
-       await run_script([python_executable, "process_schedules.py"], message) and \
-       load_structure_from_db(): # <-- ВАЖНО: Перезагружаем структуру после обновления
-        await message.answer("✅ Полное обновление успешно завершено!", reply_markup=admin_keyboard)
-    else:
-        await message.answer("❗️Обновление прервано из-за ошибки.", reply_markup=admin_keyboard)
+    await message.answer("🚀 Начинаю ручное обновление...", reply_markup=types.ReplyKeyboardRemove())
+    success, response_text = await _run_update_flow()
+    await message.answer(response_text[:4096], reply_markup=admin_keyboard, parse_mode="Markdown")
 
 @dp.message(F.text == "📥 Перезагрузить структуру", IsAdmin())
 async def reload_from_db(message: Message):
@@ -390,9 +467,147 @@ async def reload_from_db(message: Message):
     else:
         await message.answer("❌ Не удалось перезагрузить структуру.", reply_markup=admin_keyboard)
 
+# --- ИЗМЕНЕНИЕ: Новые хэндлеры для рассылки ---
+@dp.message(F.text == "Написать всем", IsAdmin())
+async def broadcast_start(message: Message, state: FSMContext):
+    await state.set_state(Broadcast.waiting_for_message)
+    await message.answer("Введите сообщение для рассылки. Для отмены введите /cancel", reply_markup=types.ReplyKeyboardRemove())
+
+@dp.message(Broadcast.waiting_for_message, Command("cancel"))
+async def broadcast_cancel(message: Message, state: FSMContext):
+    await state.clear()
+    await message.answer("Рассылка отменена.", reply_markup=admin_keyboard)
+
+@dp.message(Broadcast.waiting_for_message)
+async def broadcast_message(message: Message, state: FSMContext, bot: Bot):
+    await state.clear()
+    user_ids = get_all_user_ids()
+    sent_message_ids = []
+    success_count, fail_count = 0, 0
+
+    await message.answer(f"Начинаю рассылку для {len(user_ids)} пользователей...", reply_markup=admin_keyboard)
+    for user_id in user_ids:
+        try:
+            sent_msg = await bot.copy_message(chat_id=user_id, from_chat_id=message.chat.id, message_id=message.message_id)
+            sent_message_ids.append((user_id, sent_msg.message_id))
+            success_count += 1
+        except Exception as e:
+            logging.warning(f"Не удалось отправить сообщение пользователю {user_id}: {e}")
+            fail_count += 1
+        await asyncio.sleep(0.1) # Небольшая задержка
+
+    if sent_message_ids:
+        log_broadcast(sent_message_ids)
+
+    await message.answer(
+        f"✅ Рассылка завершена!\n\n"
+        f"Успешно: {success_count}\n"
+        f"Неуспешно: {fail_count}",
+        reply_markup=admin_keyboard
+    )
+
+@dp.message(F.text == "Удалить последнее", IsAdmin())
+async def delete_last_broadcast(message: Message, bot: Bot):
+    last_broadcast = get_last_broadcast()
+    if not last_broadcast:
+        await message.answer("Не найдено рассылок для удаления.", reply_markup=admin_keyboard)
+        return
+
+    success_count, fail_count = 0, 0
+    await message.answer(f"Начинаю удаление {len(last_broadcast)} сообщений...", reply_markup=admin_keyboard)
+
+    for chat_id, message_id in last_broadcast:
+        try:
+            await bot.delete_message(chat_id=chat_id, message_id=message_id)
+            success_count += 1
+        except Exception as e:
+            logging.warning(f"Не удалось удалить сообщение {message_id} в чате {chat_id}: {e}")
+            fail_count += 1
+        await asyncio.sleep(0.1)
+
+    log_deleted_msg = "Запись о рассылке удалена из лога." if delete_last_broadcast_log() else "Не удалось удалить запись о рассылке."
+
+    await message.answer(
+        f"✅ Удаление завершено!\n\n"
+        f"Успешно удалено: {success_count}\n"
+        f"Не удалось удалить: {fail_count}\n\n{log_deleted_msg}",
+        reply_markup=admin_keyboard
+    )
+
+# --- ИЗМЕНЕНИЕ: Новая функция для авто-обновления по расписанию ---
+async def perform_scheduled_update(bot: Bot):
+    """
+    Выполняет плановое обновление и отправляет отчет администратору.
+    """
+    logging.info("Начинаю плановое обновление расписания...")
+    success, response_text = await _run_update_flow()
+    logging.info(f"Результат планового обновления: {response_text}")
+    await bot.send_message(
+        ADMIN_ID,
+        f"--- 🤖 Отчет об авто-обновлении ---\n{response_text}",
+        parse_mode="Markdown"
+    )
+
+# --- ИЗМЕНЕНИЕ: Глобальный обработчик ошибок ---
+@dp.error()
+async def on_error(event: ErrorEvent, bot: Bot):
+    """
+    Ловит все необработанные исключения, логирует их и отправляет отчет администратору.
+    """
+    # Логируем полную ошибку в консоль
+    logging.error(f"!!! Unhandled exception in update {event.update.update_id}", exc_info=event.exception)
+
+    # Формируем traceback как строку
+    exception = event.exception
+    tb_str = "".join(traceback.format_exception(type(exception), exception, exception.__traceback__))
+
+    # Получаем информацию о пользователе, если возможно
+    user_info = "N/A"
+    update = event.update
+    if update.message and update.message.from_user:
+        user = update.message.from_user
+        user_info = f"User: {user.full_name} (ID: {user.id}, @{user.username})"
+    elif update.callback_query and update.callback_query.from_user:
+        user = update.callback_query.from_user
+        user_info = f"User: {user.full_name} (ID: {user.id}, @{user.username})"
+
+    # Формируем сообщение для администратора
+    # Обрезаем traceback, чтобы не превысить лимит сообщения Telegram (4096)
+    admin_message = (
+        f"🚨 *Критическая ошибка в боте* 🚨\n\n"
+        f"👤 *Инициатор:* {user_info}\n\n"
+        f"```\n{tb_str[-3800:]}\n```"
+    )
+
+    # Отправляем сообщение администратору
+    try:
+        await bot.send_message(ADMIN_ID, admin_message, parse_mode="Markdown")
+    except Exception as e:
+        logging.error(f"!!! КРИТИЧНО: Не удалось отправить отчет об ошибке администратору: {e}")
+
+    # Отправляем пользователю сообщение о том, что что-то пошло не так
+    chat_id = None
+    if update.message: chat_id = update.message.chat.id
+    elif update.callback_query: chat_id = update.callback_query.message.chat.id
+
+    if chat_id:
+        try:
+            await bot.send_message(chat_id, "🔧 Произошла непредвиденная ошибка. Администратор уже получил уведомление и скоро все исправит.")
+        except Exception:
+            pass # Если даже это не удалось, просто игнорируем
+
 # --- Запуск бота ---
 async def main():
     bot = Bot(token=BOT_TOKEN)
+
+    # --- ИЗМЕНЕНИЕ: Настройка и запуск планировщика ---
+    scheduler = AsyncIOScheduler(timezone=pytz.timezone('Europe/Moscow'))
+    scheduler.add_job(perform_scheduled_update, 'cron', hour=9, minute=0, args=[bot])
+    scheduler.add_job(perform_scheduled_update, 'cron', hour=18, minute=0, args=[bot])
+    scheduler.start()
+    logging.info("Планировщик задач запущен. Обновления запланированы на 9:00 и 18:00 (МСК).")
+    # --- Конец изменения ---
+
     await dp.start_polling(bot)
 
 if __name__ == '__main__':
