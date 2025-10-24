@@ -19,7 +19,7 @@ from aiogram.filters.callback_data import CallbackData
 
 # --- КОНФИГУРАЦИЯ ---
 BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
-DB_PATH = "schedule.db"
+DB_PATH = "data/schedule.db"
 
 admin_id_str = os.getenv("ADMIN_ID")
 if not admin_id_str:
