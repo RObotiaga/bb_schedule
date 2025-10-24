@@ -57,4 +57,4 @@ ENV BB_LOGIN=""
 ENV BB_PASSWORD=""
 
 # Команда для запуска приложения
-CMD ["python", "bot.py"]
+CMD ["./run.sh"]
