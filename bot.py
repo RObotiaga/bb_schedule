@@ -15,6 +15,7 @@ from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.types import Message, CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup, KeyboardButton
 from aiogram.utils.keyboard import InlineKeyboardBuilder
+from aiogram.filters.callback_data import CallbackData
 
 # --- КОНФИГУРАЦИЯ ---
 BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
@@ -35,6 +36,11 @@ except ValueError:
 structured_data = {}
 FACULTIES_LIST = []
 ALL_TEACHERS_LIST = [] # <-- ИЗМЕНЕНИЕ: Новый список для всех преподавателей
+
+# --- Фабрика для колбеков курсов ---
+class CourseCallbackFactory(CallbackData, prefix="course"):
+    course_id: int
+    faculty_id: int
 
 # --- Функции для работы с базой данных ---
 def get_db_connection():
@@ -104,10 +110,16 @@ def get_faculties_keyboard():
     builder = InlineKeyboardBuilder()
     [builder.button(text=name, callback_data=f"faculty:{i}") for i, name in enumerate(FACULTIES_LIST)]; builder.adjust(2)
     return builder.as_markup()
-def get_courses_keyboard(faculty: str):
+def get_courses_keyboard(faculty_id: int):
+    faculty = FACULTIES_LIST[faculty_id]
     builder = InlineKeyboardBuilder()
     courses = sorted(structured_data.get(faculty, {}).keys(), key=lambda c: int(c) if c.isdigit() else 99)
-    [builder.button(text=f"{c} курс", callback_data=f"course:{faculty}:{c}") for c in courses]; builder.adjust(2)
+    for course in courses:
+        builder.button(
+            text=f"{course} курс",
+            callback_data=CourseCallbackFactory(course_id=int(course), faculty_id=faculty_id)
+        )
+    builder.adjust(2)
     builder.row(InlineKeyboardButton(text="⬅️ Назад к факультетам", callback_data="back_to_faculties"))
     return builder.as_markup()
 def get_groups_keyboard(faculty: str, course: str):
@@ -200,13 +212,24 @@ async def show_teacher_schedule(target: Message | CallbackQuery, teacher_name: s
 # --- Хэндлеры Студентов (без изменений) ---
 @dp.callback_query(F.data.startswith("faculty:"))
 async def process_faculty_choice(callback: CallbackQuery):
-    faculty_name = FACULTIES_LIST[int(callback.data.split(":")[1])]
-    await callback.message.edit_text(f"Вы выбрали: *{faculty_name}*.\n\nТеперь выберите курс:", reply_markup=get_courses_keyboard(faculty_name), parse_mode="Markdown")
+    faculty_id = int(callback.data.split(":")[1])
+    faculty_name = FACULTIES_LIST[faculty_id]
+    await callback.message.edit_text(
+        f"Вы выбрали: *{faculty_name}*.\n\nТеперь выберите курс:",
+        reply_markup=get_courses_keyboard(faculty_id),
+        parse_mode="Markdown"
+    )
     await callback.answer()
-@dp.callback_query(F.data.startswith("course:"))
-async def process_course_choice(callback: CallbackQuery):
-    _, faculty, course = callback.data.split(":")
-    await callback.message.edit_text(f"Факультет: *{faculty}*, Курс: *{course}*.\n\nВыберите вашу группу:", reply_markup=get_groups_keyboard(faculty, course), parse_mode="Markdown")
+@dp.callback_query(CourseCallbackFactory.filter())
+async def process_course_choice(callback: CallbackQuery, callback_data: CourseCallbackFactory):
+    course_id = callback_data.course_id
+    faculty_id = callback_data.faculty_id
+    faculty = FACULTIES_LIST[faculty_id]
+    await callback.message.edit_text(
+        f"Факультет: *{faculty}*, Курс: *{course_id}*.\n\nВыберите вашу группу:",
+        reply_markup=get_groups_keyboard(faculty, str(course_id)),
+        parse_mode="Markdown"
+    )
     await callback.answer()
 @dp.callback_query(F.data.startswith("group:"))
 async def process_group_choice(callback: CallbackQuery):
@@ -221,8 +244,13 @@ async def back_to_faculties(callback: CallbackQuery):
     await callback.answer()
 @dp.callback_query(F.data.startswith("back_to_courses:"))
 async def back_to_courses(callback: CallbackQuery):
-    faculty_name = FACULTIES_LIST[int(callback.data.split(":")[1])]
-    await callback.message.edit_text(f"Вы выбрали: *{faculty_name}*.\n\nТеперь выберите курс:", reply_markup=get_courses_keyboard(faculty_name), parse_mode="Markdown")
+    faculty_id = int(callback.data.split(":")[1])
+    faculty_name = FACULTIES_LIST[faculty_id]
+    await callback.message.edit_text(
+        f"Вы выбрали: *{faculty_name}*.\n\nТеперь выберите курс:",
+        reply_markup=get_courses_keyboard(faculty_id),
+        parse_mode="Markdown"
+    )
     await callback.answer()
 def get_date_by_day_name(day_name: str) -> date:
     today = date.today()
