@@ -1,6 +1,7 @@
 podman run -d \
   --name my-bb-bot \
-  -v /root/db/bb_bot:/app:z \
+  -v /root/db/bb_bot/schedules:/app/schedules:z \
+  -v /root/db/bb_bot/data:/app/data:z \
   --env-file .env \
   bb-schedule-bot
 
