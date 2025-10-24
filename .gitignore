@@ -6,3 +6,5 @@ user_data.json
 uv.lock
 digest.txt
 schedule.db
+txt
+.env
