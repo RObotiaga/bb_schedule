@@ -14,10 +14,9 @@ RUN uv venv $VENV_PATH
 WORKDIR /app
 COPY pyproject.toml requirements.txt ./
 
-# uv может установить всё из pyproject.toml, включая зависимости из requirements.txt,
-# если они там указаны. Для простоты установим всё в одну команду.
-# Используем полный путь к uv в venv для большей надёжности.
-RUN ${VENV_PATH}/bin/uv pip install --no-cache -r requirements.txt .
+# --- ИСПРАВЛЕННАЯ СТРОКА ---
+# Вызываем системный uv и указываем ему, в какой Python (из нашего venv) ставить пакеты
+RUN uv pip install --no-cache --python ${VENV_PATH}/bin/python -r requirements.txt .
 
 
 # --- ЭТАП 2: Финальный образ ---
@@ -34,7 +33,6 @@ COPY --from=builder ${VENV_PATH} ${VENV_PATH}
 
 # Устанавливаем браузеры Playwright и их СИСТЕМНЫЕ зависимости.
 # Скрипт использует только Chromium, поэтому устанавливаем только его для экономии места.
-# Эта команда выполняется от имени root, что необходимо для `apt-get`.
 RUN playwright install --with-deps chromium
 
 # Создаём пользователя без root-прав для безопасности
