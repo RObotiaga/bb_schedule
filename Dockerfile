@@ -24,20 +24,32 @@ RUN . $VENV_PATH/bin/activate && \
 # Здесь мы создаём чистый образ, копируя только необходимое из "builder".
 FROM python:3.13-slim
 
-# Создаём пользователя без root-прав для безопасности
-ARG UID=1001
-RUN useradd -m -s /bin/bash -u ${UID} appuser
-
-# Устанавливаем системные зависимости, необходимые для Playwright (используется в fetch_schedule.py)
-# Для этого временно ставим Playwright, устанавливаем зависимости и сразу удаляем.
-RUN pip install uv && \
-    uv pip install --system playwright && \
-    playwright install --with-deps && \
-    uv pip uninstall --system playwright
-
 # Копируем готовое виртуальное окружение из этапа "builder"
 ENV VENV_PATH=/opt/venv
 COPY --from=builder ${VENV_PATH} ${VENV_PATH}
+
+# Добавляем venv в PATH, чтобы команды (python, playwright) были доступны напрямую
+ENV PATH="${VENV_PATH}/bin:${PATH}"
+
+# --- НАЧАЛО ИСПРАВЛЕНИЯ PLAYWRIGHT ---
+
+# 1. Явно указываем Playwright, куда скачивать и где потом искать браузеры.
+# Это избавляет от путаницы с домашними директориями /root/.cache и /home/appuser/.cache.
+ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
+
+# 2. Устанавливаем системные зависимости, сам браузер и выставляем права доступа.
+#    - Создаем общую директорию /ms-playwright.
+#    - Запускаем `playwright install`, который теперь будет использовать путь из PLAYWRIGHT_BROWSERS_PATH.
+#    - Командой `chmod -R 755` мы делаем эту папку доступной для чтения и запуска ЛЮБЫМ пользователем.
+RUN mkdir ${PLAYWRIGHT_BROWSERS_PATH} && \
+    playwright install --with-deps chromium && \
+    chmod -R 755 ${PLAYWRIGHT_BROWSERS_PATH}
+
+# --- КОНЕЦ ИСПРАВЛЕНИЯ PLAYWRIGHT ---
+
+# Создаём пользователя без root-прав для безопасности
+ARG UID=1001
+RUN useradd -m -s /bin/bash -u ${UID} appuser
 
 # Устанавливаем рабочую директорию
 WORKDIR /app
@@ -47,9 +59,6 @@ COPY --chown=appuser:appuser . .
 
 # Переключаемся на пользователя без root-прав
 USER appuser
-
-# Добавляем venv в PATH, чтобы команды (python, playwright) были доступны напрямую
-ENV PATH="${VENV_PATH}/bin:${PATH}"
 
 # Создаём директорию для скачанных расписаний, чтобы с ней можно было связать том (volume)
 RUN mkdir schedules
