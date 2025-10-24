@@ -6,7 +6,7 @@ from datetime import datetime
 
 # --- КОНФИГУРАЦИЯ ---
 SCHEDULES_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "schedules"))
-DB_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), "schedule.db"))
+DB_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), "data/schedule.db"))
 CURRENT_YEAR = datetime.now().year
 
 # --- ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ---
