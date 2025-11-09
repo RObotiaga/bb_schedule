@@ -1,5 +1,6 @@
 # Используем образ с установленными зависимостями Playwright
-FROM mcr.microsoft.com/playwright/python:v1.44.0-jammy
+# СТАРОЕ: FROM mcr.microsoft.com/playwright/python:v1.44.0-jammy
+FROM mcr.microsoft.com/playwright/python:v1.55.0-jammy  # <-- ИСПРАВЛЕНИЕ: Используем требуемую версию 1.55.0
 
 # Устанавливаем рабочую директорию
 WORKDIR /app
