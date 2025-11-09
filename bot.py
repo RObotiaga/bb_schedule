@@ -446,6 +446,18 @@ async def find_teacher_by_name(message: Message, state: FSMContext):
     await state.update_data(matches=matches)
     await message.answer("Найдено несколько преподавателей. Пожалуйста, выберите:", reply_markup=get_teacher_choices_keyboard(matches))
 
+@dp.callback_query(F.data.startswith("teacher_nav:"))
+async def process_teacher_nav(callback: CallbackQuery, state: FSMContext):
+    day_offset = int(callback.data.split(":")[1])
+    data = await state.get_data()
+    teacher_name = data.get("name")
+    
+    if not teacher_name:
+        await callback.answer("Ошибка: не удалось найти имя преподавателя. Пожалуйста, попробуйте снова.", show_alert=True)
+        return
+        
+    await show_teacher_schedule(callback, teacher_name, day_offset)
+
 # --- Хэндлеры Администратора ---
 @dp.message(F.text == "/admin", IsAdmin())
 async def admin_panel(message: Message):
