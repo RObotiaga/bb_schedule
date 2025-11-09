@@ -6,4 +6,4 @@ aiogram
 gitingest
 python-decouple>=3.8
 apscheduler
-
+aiosqlite  # <-- ДОБАВЛЕНО
