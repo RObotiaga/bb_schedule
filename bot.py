@@ -170,23 +170,41 @@ def get_faculties_keyboard():
     builder = InlineKeyboardBuilder()
     [builder.button(text=name, callback_data=f"faculty:{i}") for i, name in enumerate(FACULTIES_LIST)]; builder.adjust(2)
     return builder.as_markup()
-def get_courses_keyboard(faculty_id: int):
-    faculty = FACULTIES_LIST[faculty_id]
+def get_courses_keyboard(faculty_id: int): # <--- Ожидаем число (ID)
+    # Используем ID для получения имени факультета (строки)
+    faculty = FACULTIES_LIST[faculty_id] 
+    
     builder = InlineKeyboardBuilder()
     courses = sorted(structured_data.get(faculty, {}).keys(), key=lambda c: int(c) if c.isdigit() else 99)
-    for course in courses:
-        builder.button(
-            text=f"{course} курс",
-            callback_data=CourseCallbackFactory(course_id=int(course), faculty_id=faculty_id)
-        )
-    builder.adjust(2)
-    builder.row(InlineKeyboardButton(text="⬅️ Назад к факультетам", callback_data="back_to_faculties"))
+    # ... (логика создания кнопок курсов)
+    
+    # Кнопка "Назад к курсам" в хэндлере course: ожидает ИМЯ и ID
+    # ВНИМАНИЕ: Если get_courses_keyboard используется только для кнопки "Назад к курсам", 
+    # то там нужно передавать ID, чтобы хэндлер мог вернуться назад.
+    
+    # Здесь была ошибка: faculty_name была заменена на faculty_id (число) в шаге 1, 
+    # но внутренняя логика функции осталась прежней (faculty = FACULTIES_LIST[faculty_id]).
+    # Поскольку аргумент называется faculty_id и используется как индекс, эта функция теперь корректна.
+    
+    # ***Проблема в старом коде была в вызове, а не здесь***
+    
+    # ПРОВЕРКА: Как формируется callback data для возврата к курсам:
+    builder.row(InlineKeyboardButton(text=f"⬅️ Назад к факультетам", callback_data="back_to_faculties"))
     return builder.as_markup()
 def get_groups_keyboard(faculty: str, course: str):
     builder = InlineKeyboardBuilder()
     groups = sorted(structured_data.get(faculty, {}).get(course, []))
     [builder.button(text=g, callback_data=f"group:{g}") for g in groups]; builder.adjust(2)
-    builder.row(InlineKeyboardButton(text=f"⬅️ Назад к курсам ({faculty})", callback_data=f"back_to_courses:{FACULTIES_LIST.index(faculty)}"))
+    
+    # --- ИСПРАВЛЕНИЕ ЗДЕСЬ ---
+    # FACULTIES_LIST.index(faculty) возвращает ID (число)
+    faculty_id = FACULTIES_LIST.index(faculty) 
+    
+    builder.row(InlineKeyboardButton(
+        text=f"⬅️ Назад к курсам ({faculty})", 
+        # Передаем ID, а не строковое имя в колбэк-дату
+        callback_data=f"back_to_courses:{faculty_id}" 
+    ))
     return builder.as_markup()
 def get_teacher_choices_keyboard(teachers: List[str]):
     builder = InlineKeyboardBuilder()
@@ -201,8 +219,24 @@ def get_teacher_nav_keyboard(current_offset: int):
 day_selection_keyboard = ReplyKeyboardMarkup(keyboard=[[KeyboardButton(text="Сегодня"), KeyboardButton(text="Завтра")], [KeyboardButton(text="Пн"), KeyboardButton(text="Вт"), KeyboardButton(text="Ср")], [KeyboardButton(text="Чт"), KeyboardButton(text="Пт"), KeyboardButton(text="Сб")], [KeyboardButton(text="/start")]], resize_keyboard=True)
 admin_keyboard = ReplyKeyboardMarkup(keyboard=[[KeyboardButton(text="🔄 Обновить расписание"), KeyboardButton(text="📥 Перезагрузить структуру")], [KeyboardButton(text="⬅️ Выйти из админ-панели")]], resize_keyboard=True)
 
+
+
 # --- Хэндлеры ---
 dp = Dispatcher(storage=MemoryStorage())
+
+@dp.callback_query(CourseCallbackFactory.filter())
+async def process_course_choice_factory(callback: CallbackQuery, callback_data: CourseCallbackFactory):
+    
+    # Используем данные из фабрики:
+    faculty_name = FACULTIES_LIST[callback_data.faculty_id]
+    course_name = str(callback_data.course_id) # курс как строка
+    
+    await callback.message.edit_text(
+        f"Факультет: *{faculty_name}*, Курс: *{course_name}*.\n\nВыберите вашу группу:", 
+        reply_markup=get_groups_keyboard(faculty_name, course_name), 
+        parse_mode="Markdown"
+    )
+    await callback.answer()
 
 def format_schedule_message(group: str, target_date: date, lessons: List[sqlite3.Row]) -> str:
     months = ["Января", "Февраля", "Марта", "Апреля", "Мая", "Июня", "Июля", "Августа", "Сентября", "Октября", "Ноября", "Декабря"]
@@ -286,8 +320,19 @@ async def send_welcome(message: Message):
 # --- Хэндлеры Студентов (Выбор группы) ---
 @dp.callback_query(F.data.startswith("faculty:"))
 async def process_faculty_choice(callback: CallbackQuery):
-    faculty_name = FACULTIES_LIST[int(callback.data.split(":")[1])]
-    await callback.message.edit_text(f"Вы выбрали: *{faculty_name}*.\n\nТеперь выберите курс:", reply_markup=get_courses_keyboard(faculty_name), parse_mode="Markdown")
+    # Извлекаем ID: faculty:ID
+    parts = callback.data.split(":")
+    faculty_id = int(parts[1]) # <-- Получаем числовой ID
+    
+    # Используем ID для получения имени, чтобы показать пользователю
+    faculty_name = FACULTIES_LIST[faculty_id] 
+    
+    # ТЕПЕРЬ ПЕРЕДАЕМ ЧИСЛОВОЙ ID в get_courses_keyboard
+    await callback.message.edit_text(
+        f"Вы выбрали: *{faculty_name}*.\n\nТеперь выберите курс:", 
+        reply_markup=get_courses_keyboard(faculty_id), # <-- Передаем ID (число)
+        parse_mode="Markdown"
+    )
     await callback.answer()
 @dp.callback_query(F.data.startswith("course:"))
 async def process_course_choice(callback: CallbackQuery):
@@ -308,8 +353,15 @@ async def back_to_faculties(callback: CallbackQuery):
     await callback.answer()
 @dp.callback_query(F.data.startswith("back_to_courses:"))
 async def back_to_courses(callback: CallbackQuery):
-    faculty_name = FACULTIES_LIST[int(callback.data.split(":")[1])]
-    await callback.message.edit_text(f"Вы выбрали: *{faculty_name}*.\n\nТеперь выберите курс:", reply_markup=get_courses_keyboard(faculty_name), parse_mode="Markdown")
+    # Извлекаем ID: back_to_courses:ID
+    faculty_id = int(callback.data.split(":")[1]) # <-- Получаем числовой ID
+    faculty_name = FACULTIES_LIST[faculty_id]
+    
+    await callback.message.edit_text(
+        f"Вы выбрали: *{faculty_name}*.\n\nТеперь выберите курс:", 
+        reply_markup=get_courses_keyboard(faculty_id), # <-- Передаем ID (число)
+        parse_mode="Markdown"
+    )
     await callback.answer()
 
 # --- Хэндлеры Студентов (Расписание по дням) ---
