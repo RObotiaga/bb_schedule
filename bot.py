@@ -38,14 +38,21 @@ from database import (
 )
 
 # --- КОНФИГУРАЦИЯ (УНИФИКАЦИЯ ПУТЕЙ) ---
-BOT_TOKEN = config("TELEGRAM_BOT_TOKEN")
+# Используем config, но с дефолтом, который Portainer не должен использовать
+BOT_TOKEN = config("TELEGRAM_BOT_TOKEN", default=None)
 # Путь, который будет смонтирован через Docker Volume.
 # Он должен быть точно таким же, как в docker-compose volumes: /app/data
 # DB_PATH импортируется из config.py
 # ---------------------------------------
 
 # Используем decouple для получения ADMIN_ID
-admin_id_str = config("ADMIN_ID")
+admin_id_str = config("ADMIN_ID", default=None)
+
+# !!! КРИТИЧНОЕ ИЗМЕНЕНИЕ: Проверка переменных после вызова config !!!
+if not BOT_TOKEN:
+    logging.error("Критическая ошибка: TELEGRAM_BOT_TOKEN не задан!")
+    sys.exit(1)
+
 if not admin_id_str:
     logging.error("Критическая ошибка: ADMIN_ID не задан!")
     sys.exit(1)

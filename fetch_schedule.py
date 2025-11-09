@@ -10,8 +10,13 @@ from playwright.async_api import async_playwright, TimeoutError as PlaywrightTim
 from decouple import config
 
 # --- КОНФИГУРАЦИЯ ---
-LOGIN = config("BB_LOGIN")
-PASSWORD = config("BB_PASSWORD")
+LOGIN = config("BB_LOGIN", default=None)
+PASSWORD = config("BB_PASSWORD", default=None)
+
+if not LOGIN or not PASSWORD:
+    print("Критическая ошибка: Не найдены переменные окружения BB_LOGIN/BB_PASSWORD.")
+    sys.exit(1)
+
 BB_URL = "https://bb.usurt.ru/"
 from config import DOWNLOAD_DIR
 
