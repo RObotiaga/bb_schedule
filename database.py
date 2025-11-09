@@ -1,0 +1,162 @@
+# FILE: database.py (Refactored FIX)
+import aiosqlite
+import logging
+import json
+from typing import List, Dict, Any, Tuple
+from config import DB_PATH
+import os
+
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+
+# --- Инициализация и подключение ---
+async def get_db_connection():
+    """
+    Возвращает асинхронный контекстный менеджер aiosqlite.connect(), 
+    который будет ожидан при использовании async with.
+    """
+    # Создаем директорию для БД, если ее нет (синхронно)
+    os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
+    # КЛЮЧЕВОЕ ИЗМЕНЕНИЕ: Не используем await здесь!
+    return aiosqlite.connect(DB_PATH)
+
+async def initialize_database():
+    """Создает все необходимые таблицы, если они не существуют."""
+    # КОРРЕКТНОЕ ИСПОЛЬЗОВАНИЕ: async with ожидает результат get_db_connection()
+    async with await get_db_connection() as db:
+        # Устанавливаем режим возврата словарей (row_factory) для удобства
+        db.row_factory = aiosqlite.Row 
+        
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS users (
+                user_id INTEGER PRIMARY KEY, 
+                group_name TEXT
+            )
+        """)
+        
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS schedule (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                faculty TEXT,
+                course TEXT,
+                group_name TEXT,
+                week_type TEXT,
+                lesson_date TEXT,
+                time TEXT,
+                subject TEXT,
+                teacher TEXT,
+                location TEXT
+            )
+        """)
+        
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS broadcast_log (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                sent_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                message_ids_json TEXT
+            )
+        """)
+        await db.commit()
+    logging.info("База данных успешно инициализирована (aiosqlite).")
+
+# --- Загрузка структуры в память (Кэширование) ---
+async def load_structure_from_db() -> Tuple[Dict[str, Any], List[str], List[str]]:
+    """Загружает структуру меню и список преподавателей из БД асинхронно."""
+    # КОРРЕКТНОЕ ИСПОЛЬЗОВАНИЕ
+    async with await get_db_connection() as db:
+        db.row_factory = aiosqlite.Row
+
+        try:
+            # 1. Загрузка структуры меню
+            cursor = await db.execute("SELECT DISTINCT faculty, course, group_name FROM schedule ORDER BY faculty, course, group_name")
+            rows = await cursor.fetchall()
+            
+            temp_structured_data = {}
+            for row in rows:
+                faculty, course, group_name = row['faculty'], row['course'], row['group_name']
+                if faculty not in temp_structured_data: temp_structured_data[faculty] = {}
+                if course not in temp_structured_data[faculty]: temp_structured_data[faculty][course] = []
+                if group_name not in temp_structured_data[faculty][course]: temp_structured_data[faculty][course].append(group_name)
+            
+            FACULTIES_LIST = sorted(temp_structured_data.keys())
+            
+            # 2. Загрузка списка преподавателей
+            cursor_teachers = await db.execute("SELECT DISTINCT teacher FROM schedule WHERE teacher IS NOT NULL AND teacher != 'Не указан'")
+            ALL_TEACHERS_LIST = sorted([row['teacher'] for row in await cursor_teachers.fetchall()])
+            
+            logging.info(f"Структура меню ({len(FACULTIES_LIST)} факультетов) и {len(ALL_TEACHERS_LIST)} преподавателей успешно загружены.")
+            return temp_structured_data, FACULTIES_LIST, ALL_TEACHERS_LIST
+
+        except aiosqlite.OperationalError as e:
+            logging.error(f"Ошибка при загрузке структуры из БД: {e}. Таблица 'schedule' пуста или отсутствует.")
+            return {}, [], []
+
+# --- Пользователи и Группы ---
+async def save_user_group_db(user_id: int, group_name: str | None):
+    # КОРРЕКТНОЕ ИСПОЛЬЗОВАНИЕ
+    async with await get_db_connection() as db:
+        await db.execute("INSERT OR REPLACE INTO users (user_id, group_name) VALUES (?, ?)", (user_id, group_name))
+        await db.commit()
+
+async def get_user_group_db(user_id: int) -> str | None:
+    # КОРРЕКТНОЕ ИСПОЛЬЗОВАНИЕ
+    async with await get_db_connection() as db:
+        async with db.execute("SELECT group_name FROM users WHERE user_id = ?", (user_id,)) as cursor:
+            row = await cursor.fetchone()
+            # row[0] вместо row['group_name'] так как row_factory не применяется 
+            # по умолчанию для row_factory = aiosqlite.Row в aiosqlite.fetchone() 
+            # без явного установления на уровне курсора или коннекта
+            return row[0] if row else None 
+
+async def get_all_user_ids() -> List[int]:
+    # КОРРЕКТНОЕ ИСПОЛЬЗОВАНИЕ
+    async with await get_db_connection() as db:
+        async with db.execute("SELECT user_id FROM users") as cursor:
+            rows = await cursor.fetchall()
+            return [row[0] for row in rows]
+
+# --- Расписание ---
+async def get_schedule_by_group(group: str, date_str: str):
+    # КОРРЕКТНОЕ ИСПОЛЬЗОВАНИЕ
+    async with await get_db_connection() as db:
+        db.row_factory = aiosqlite.Row # Устанавливаем явно
+        async with db.execute(
+            "SELECT * FROM schedule WHERE group_name = ? AND lesson_date = ? ORDER BY time", 
+            (group, date_str)
+        ) as cursor:
+            return await cursor.fetchall()
+
+async def get_schedule_by_teacher(teacher_name: str, date_str: str):
+    # КОРРЕКТНОЕ ИСПОЛЬЗОВАНИЕ
+    async with await get_db_connection() as db:
+        db.row_factory = aiosqlite.Row # Устанавливаем явно
+        async with db.execute(
+            "SELECT * FROM schedule WHERE teacher = ? AND lesson_date = ? ORDER BY time", 
+            (teacher_name, date_str)
+        ) as cursor:
+            return await cursor.fetchall()
+
+# --- Логирование рассылок ---
+async def log_broadcast(message_ids: list):
+    # КОРРЕКТНОЕ ИСПОЛЬЗОВАНИЕ
+    async with await get_db_connection() as db:
+        await db.execute("INSERT INTO broadcast_log (message_ids_json) VALUES (?)", (json.dumps(message_ids),))
+        await db.commit()
+
+async def get_last_broadcast() -> List[tuple] | None:
+    # КОРРЕКТНОЕ ИСПОЛЬЗОВАНИЕ
+    async with await get_db_connection() as db:
+        async with db.execute("SELECT message_ids_json FROM broadcast_log ORDER BY id DESC LIMIT 1") as cursor:
+            row = await cursor.fetchone()
+            # row[0] вместо row['message_ids_json']
+            return json.loads(row[0]) if row else None
+
+async def delete_last_broadcast_log() -> bool:
+    # КОРРЕКТНОЕ ИСПОЛЬЗОВАНИЕ
+    async with await get_db_connection() as db:
+        async with db.execute("SELECT id FROM broadcast_log ORDER BY id DESC LIMIT 1") as cursor:
+            row = await cursor.fetchone()
+            if row:
+                await db.execute("DELETE FROM broadcast_log WHERE id = ?", (row[0],))
+                await db.commit()
+                return True
+            return False

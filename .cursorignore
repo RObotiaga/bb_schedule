@@ -1,0 +1,5 @@
+txt
+digest.txt
+.venv
+uv.lock
+gitingest.py

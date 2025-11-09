@@ -1,0 +1,25 @@
+# Игнорируем специфические файлы проекта
+*.pyc
+__pycache__/
+
+# Игнорируем логи и временные данные
+fatal_error_screenshot.png
+fatal_error_page.html
+
+# --- Управление папкой data ---
+# Игнорируем всё содержимое папки data
+data/*
+
+# Исключения:
+# 1. Оставляем саму папку 'data/' (ее родитель, .gitkeep)
+!data/
+# 2. Оставляем файл-маркер в корне data
+!data/.gitkeep
+# 3. Оставляем файл-маркер в подпапке schedules
+!data/schedules/.gitkeep
+
+# Игнорируем Playwright кэш
+.pylint.d/
+uv.lock
+.env
+digest.txt
