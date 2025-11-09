@@ -32,7 +32,7 @@ from aiogram.types.error_event import ErrorEvent
 from config import DB_PATH 
 from database import (
     initialize_database, load_structure_from_db, 
-    save_user_group_db, get_user_group_db, get_all_user_ids,
+    save_user_group_db, get_user_group_db, get_all_user_ids, get_all_courses,
     log_broadcast, get_last_broadcast, delete_last_broadcast_log,
     get_schedule_by_group, get_schedule_by_teacher
 )
@@ -176,20 +176,29 @@ def get_courses_keyboard(faculty_id: int): # <--- Ожидаем число (ID)
     
     builder = InlineKeyboardBuilder()
     courses = sorted(structured_data.get(faculty, {}).keys(), key=lambda c: int(c) if c.isdigit() else 99)
-    # ... (логика создания кнопок курсов)
     
-    # Кнопка "Назад к курсам" в хэндлере course: ожидает ИМЯ и ID
-    # ВНИМАНИЕ: Если get_courses_keyboard используется только для кнопки "Назад к курсам", 
-    # то там нужно передавать ID, чтобы хэндлер мог вернуться назад.
-    
-    # Здесь была ошибка: faculty_name была заменена на faculty_id (число) в шаге 1, 
-    # но внутренняя логика функции осталась прежней (faculty = FACULTIES_LIST[faculty_id]).
-    # Поскольку аргумент называется faculty_id и используется как индекс, эта функция теперь корректна.
-    
-    # ***Проблема в старом коде была в вызове, а не здесь***
-    
-    # ПРОВЕРКА: Как формируется callback data для возврата к курсам:
-    builder.row(InlineKeyboardButton(text=f"⬅️ Назад к факультетам", callback_data="back_to_faculties"))
+    if not courses:
+         logging.warning(f"Не найдены курсы для факультета: {faculty}")
+         # Если курсов нет, возвращаем только кнопку "Назад"
+         builder.row(InlineKeyboardButton(text="⬅️ Назад к факультетам", callback_data="back_to_faculties"))
+         return builder.as_markup()
+         
+    for course in courses:
+        # Убедимся, что 'course' можно безопасно конвертировать в int для CourseCallbackFactory
+        try:
+            course_int = int(course)
+        except ValueError:
+             logging.error(f"Не удалось конвертировать курс '{course}' в число. Пропуск.")
+             continue
+             
+        builder.button(
+            text=f"{course} курс",
+            # Передаем числа в фабрику
+            callback_data=CourseCallbackFactory(course_id=course_int, faculty_id=faculty_id)
+        )
+        
+    builder.adjust(2)
+    builder.row(InlineKeyboardButton(text="⬅️ Назад к факультетам", callback_data="back_to_faculties"))
     return builder.as_markup()
 def get_groups_keyboard(faculty: str, course: str):
     builder = InlineKeyboardBuilder()
@@ -317,6 +326,24 @@ async def send_welcome(message: Message):
                          "Для поиска по преподавателю - просто напишите его фамилию.",
                          reply_markup=get_faculties_keyboard())
 
+@dp.message(lambda message: message.text in ["Show schedule for a course", "Показать расписание для курса"])
+async def get_course(message: types.Message):
+    """
+    Этот обработчик будет вызван, когда пользователь отправит "Show schedule for a course" или "Показать расписание для курса"
+    """
+    # Получаем список курсов из базы данных
+    courses = await get_all_courses()
+    if not courses:
+        await message.reply("В базе данных не найдено ни одного курса.")
+        return
+
+    # Создаем клавиатуру с кнопками курсов
+    keyboard = types.ReplyKeyboardMarkup(resize_keyboard=True)
+    for course in courses:
+        keyboard.add(types.KeyboardButton(course))
+
+    await message.reply("Пожалуйста, выберите курс:", reply_markup=keyboard)
+
 # --- Хэндлеры Студентов (Выбор группы) ---
 @dp.callback_query(F.data.startswith("faculty:"))
 async def process_faculty_choice(callback: CallbackQuery):
@@ -354,12 +381,19 @@ async def back_to_faculties(callback: CallbackQuery):
 @dp.callback_query(F.data.startswith("back_to_courses:"))
 async def back_to_courses(callback: CallbackQuery):
     # Извлекаем ID: back_to_courses:ID
-    faculty_id = int(callback.data.split(":")[1]) # <-- Получаем числовой ID
+    try:
+        faculty_id = int(callback.data.split(":")[1])
+    except (ValueError, IndexError):
+        await callback.answer("Ошибка навигации: неверный формат ID факультета.", show_alert=True)
+        await callback.message.edit_text("Пожалуйста, выберите ваш факультет:", reply_markup=get_faculties_keyboard())
+        return
+
     faculty_name = FACULTIES_LIST[faculty_id]
     
+    # Передаем ЧИСЛОВОЙ ID в get_courses_keyboard
     await callback.message.edit_text(
         f"Вы выбрали: *{faculty_name}*.\n\nТеперь выберите курс:", 
-        reply_markup=get_courses_keyboard(faculty_id), # <-- Передаем ID (число)
+        reply_markup=get_courses_keyboard(faculty_id), 
         parse_mode="Markdown"
     )
     await callback.answer()

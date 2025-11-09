@@ -114,6 +114,13 @@ async def get_all_user_ids() -> List[int]:
             rows = await cursor.fetchall()
             return [row[0] for row in rows]
 
+async def get_all_courses() -> List[str]:
+    """Возвращает отсортированный список уникальных курсов."""
+    async with await get_db_connection() as db:
+        cursor = await db.execute("SELECT DISTINCT course FROM schedule ORDER BY course")
+        rows = await cursor.fetchall()
+        return [row[0] for row in rows]
+
 # --- Расписание ---
 async def get_schedule_by_group(group: str, date_str: str):
     # КОРРЕКТНОЕ ИСПОЛЬЗОВАНИЕ
