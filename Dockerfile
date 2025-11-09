@@ -6,6 +6,8 @@ WORKDIR /app
 
 # Копируем файлы проекта
 COPY requirements.txt .
+COPY config.py .           
+COPY database.py .         
 COPY fetch_schedule.py .
 COPY process_schedules.py .
 COPY bot.py .
