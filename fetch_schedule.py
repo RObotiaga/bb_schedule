@@ -14,7 +14,7 @@ LOGIN = config("BB_LOGIN", default=None)
 PASSWORD = config("BB_PASSWORD", default=None)
 
 if not LOGIN or not PASSWORD:
-    print("Критическая ошибка: Не найдены переменные окружения BB_LOGIN/BB_PASSWORD.")
+    logging.error("Критическая ошибка: Не найдены переменные окружения BB_LOGIN/BB_PASSWORD.")
     sys.exit(1)
 
 BB_URL = "https://bb.usurt.ru/"
@@ -57,7 +57,7 @@ async def click_schedule_root(page, context):
     return new_page
 
 async def navigate_to_week_folder(page, week_name):
-    print(f"Переходим в папку '{week_name}'...")
+    logging.info(f"Переходим в папку '{week_name}'...")
     
     # ИСПРАВЛЕНИЕ 1: Ищем ссылку по роли, это сработало
     week_link = page.get_by_role(
@@ -73,7 +73,7 @@ async def navigate_to_week_folder(page, week_name):
     logging.info("Переход выполнен.")
 
 async def get_faculty_folder_links(page):
-    print("Ищем ссылки на папки факультетов...")
+    logging.info("Ищем ссылки на папки факультетов...")
     
     # --- ИСПРАВЛЕНИЕ 2: Используем точный селектор для содержимого таблицы ---
     # Ищем ссылки (папки), которые ведут на frameset, только внутри тела списка элементов.
@@ -128,17 +128,17 @@ async def download_xls_files(page, faculty_name: str):
             logging.info(f"    - Скачан в: {os.path.relpath(save_path)}")
             count += 1
         except PlaywrightTimeout as e:
-            print(f"    - Не удалось скачать файл (таймаут). Ошибка: {e}")
+            logging.error(f"    - Не удалось скачать файл (таймаут). Ошибка: {e}")
             continue
         except Exception as e:
-            print(f"    - Не удалось скачать файл. Неизвестная ошибка: {type(e).__name__}: {e}")
+            logging.error(f"    - Не удалось скачать файл. Неизвестная ошибка: {type(e).__name__}: {e}")
             continue
     return count
 
 async def process_faculty_folders(page):
     faculty_list_url = page.url
     folder_links = await get_faculty_folder_links(page)
-    print(f'Найдено папок факультетов: {len(folder_links)}')
+    logging.info(f'Найдено папок факультетов: {len(folder_links)}')
     
     if not folder_links:
         return
@@ -165,16 +165,38 @@ async def process_faculty_folders(page):
             # Fallback
             decoded_folder_name = f"Факультет_{i}"
 
-        print(f'\nОбрабатываем папку {i}/{len(folder_links)}: "{decoded_folder_name}"...')
+        logging.info(f'\nОбрабатываем папку {i}/{len(folder_links)}: "{decoded_folder_name}"...')
         
         count = await download_xls_files(page, decoded_folder_name)
         logging.info(f'  Скачано файлов из папки: {count}')
         
         if i < len(folder_links):
-            print("  Возвращаемся к списку факультетов...")
+            logging.info("  Возвращаемся к списку факультетов...")
             # Принудительный возврат к списку факультетов
             await page.goto(faculty_list_url)
             await page.wait_for_load_state("networkidle")
+
+async def get_week_folder_links(page):
+    """Динамически ищет папки недель на странице."""
+    logging.info("Ищем ссылки на папки недель...")
+    folder_selector = 'tbody#listContainer_databody a[href*="action=frameset"]'
+    
+    try:
+        await page.locator(folder_selector).first.wait_for(timeout=10000)
+    except PlaywrightTimeout:
+        logging.warning("Не найдено ни одной папки недель на странице.")
+        return {}
+
+    folder_locators = await page.locator(folder_selector).all()
+    
+    week_links = {}
+    for loc in folder_locators:
+        href = await loc.get_attribute('href')
+        name = await loc.inner_text()
+        if href and name and ('неделя' in name.lower() or 'четная' in name.lower() or 'нечет' in name.lower()):
+            week_links[name] = href
+            
+    return week_links
 
 async def main():
     ensure_download_dir()
@@ -185,21 +207,29 @@ async def main():
         context = await browser.new_context(accept_downloads=True)
         page = await context.new_page() 
         try:
-            print("--- START LOGIN ---")
+            logging.info("--- START LOGIN ---")
             await login(page)
-            print("--- LOGIN SUCCESS ---")
+            logging.info("--- LOGIN SUCCESS ---")
 
             page = await click_schedule_root(page, context)
             
             week_selection_page_url = page.url
-            week_types_to_process = ["Нечетная неделя", "Четная неделя"]
             
-            for week_name in week_types_to_process:
-                print(f"\n{'='*20} НАЧИНАЕМ ОБРАБОТКУ: {week_name.upper()} {'='*20}")
+            # Динамически получаем папки недель
+            week_folders = await get_week_folder_links(page)
+            
+            if not week_folders:
+                logging.error("Не удалось найти папки для четной/нечетной недели. Прерывание.")
+                sys.exit(1)
+
+            for week_name, week_href in week_folders.items():
+                logging.info(f"\n{'='*20} НАЧИНАЕМ ОБРАБОТКУ: {week_name.upper()} {'='*20}")
                 
+                # Возвращаемся на страницу выбора недель
                 await page.goto(week_selection_page_url)
                 await page.wait_for_load_state("networkidle")
                 
+                # Переходим в папку недели
                 await navigate_to_week_folder(page, week_name)
                 
                 # После перехода в папку Недели, запускаем обработку факультетов
@@ -208,19 +238,15 @@ async def main():
             logging.info(f"\n{'='*20} ВСЕ НЕДЕЛИ УСПЕШНО ОБРАБОТАНЫ {'='*20}")
 
         except Exception as e:
-            print(f"\nПроизошла фатальная ошибка: {type(e).__name__}: {e}")
+            logging.error(f"\nПроизошла фатальная ошибка: {type(e).__name__}: {e}", exc_info=True)
             sys.exit(1) 
         finally:
             logging.info("Закрываем браузер...")
             await browser.close()
 
 if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
     if os.path.exists(os.path.join(os.getcwd(), '..')):
         sys.path.insert(0, os.path.abspath(os.path.join(os.getcwd(), '..')))
-        
-    # Дополнительная проверка на наличие .env
-    if not config("BB_LOGIN", default=None):
-        print("Критическая ошибка: Не найдены переменные окружения BB_LOGIN/BB_PASSWORD. Проверьте ваш .env файл.")
-        sys.exit(1)
         
     asyncio.run(main())

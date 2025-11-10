@@ -107,10 +107,10 @@ def main():
         print(f"Ошибка: Директория для поиска расписаний '{SCHEDULES_DIR}' не найдена. Возможно, скрапинг не был запущен или завершился ошибкой.")
         sys.exit(1)
         
-    # 1. Удаляем старую БД (для гарантии свежести)
-    if os.path.exists(DB_PATH):
-        print(f"Удаление старой базы данных '{os.path.basename(DB_PATH)}'...")
-        os.remove(DB_PATH)
+    # 1. Удаляем старую БД (для гарантии свежести) - ЗАКОММЕНТИРОВАНО, ЧТОБЫ НЕ ТЕРЯТЬ ДАННЫЕ ПОЛЬЗОВАТЕЛЕЙ
+    # if os.path.exists(DB_PATH):
+    #     print(f"Удаление старой базы данных '{os.path.basename(DB_PATH)}'...")
+    #     os.remove(DB_PATH)
         
     conn = sqlite3.connect(DB_PATH)
     

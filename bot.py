@@ -147,12 +147,7 @@ async def perform_full_update(bot: Bot, admin_id: int, target_message: Optional[
             await target_message.answer("❗️ Обновление прервано из-за ошибки (см. логи выше).", reply_markup=admin_keyboard)
 
 
-# --- Функции для работы с базой данных (синхронные, используются только в show_teacher_schedule) ---
-def get_db_connection():
-    """Синхронное подключение к БД. Используется только в show_teacher_schedule для совместимости."""
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
-    return conn
+
 
 # --- Первичная инициализация (будет выполнена в main()) ---
 # Инициализация БД и загрузка структуры перенесены в async функцию main()
@@ -267,11 +262,9 @@ def format_schedule_message(group: str, target_date: date, lessons: List[sqlite3
 async def show_teacher_schedule(target: Message | CallbackQuery, teacher_name: str, day_offset: int):
     target_date = date.today() + timedelta(days=day_offset)
     date_str = target_date.strftime('%Y-%m-%d')
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    cursor.execute("SELECT * FROM schedule WHERE teacher = ? AND lesson_date = ? ORDER BY time", (teacher_name, date_str))
-    lessons_raw = cursor.fetchall()
-    conn.close()
+    
+    # ИСПОЛЬЗУЕМ АСИНХРОННЫЙ ВЫЗОВ
+    lessons_raw = await get_schedule_by_teacher(teacher_name, date_str)
     
     # Группировка по парам и сбор групп
     merged_lessons = {}
@@ -320,11 +313,24 @@ async def show_teacher_schedule(target: Message | CallbackQuery, teacher_name: s
 
 @dp.message(CommandStart())
 async def send_welcome(message: Message):
-    await save_user_group_db(message.from_user.id, None)
-    await message.answer("👋 Добро пожаловать! Я помогу вам узнать расписание.\n\n"
-                         "Для поиска по группе - выберите ваш факультет.\n"
-                         "Для поиска по преподавателю - просто напишите его фамилию.",
-                         reply_markup=get_faculties_keyboard())
+    # Проверяем, есть ли у пользователя уже выбранная группа
+    user_group = await get_user_group_db(message.from_user.id)
+    
+    if user_group:
+        # Если группа есть, приветствуем и сразу предлагаем посмотреть расписание
+        await message.answer(
+            f"👋 С возвращением! Ваша группа: *{user_group}*.\n\n"
+            "Вы можете посмотреть расписание на выбранный день.",
+            reply_markup=day_selection_keyboard,
+            parse_mode="Markdown"
+        )
+    else:
+        # Если группы нет, запускаем стандартный процесс настройки
+        await save_user_group_db(message.from_user.id, None)
+        await message.answer("👋 Добро пожаловать! Я помогу вам узнать расписание.\n\n"
+                             "Для поиска по группе - выберите ваш факультет.\n"
+                             "Для поиска по преподавателю - просто напишите его фамилию.",
+                             reply_markup=get_faculties_keyboard())
 
 @dp.message(lambda message: message.text in ["Show schedule for a course", "Показать расписание для курса"])
 async def get_course(message: types.Message):
