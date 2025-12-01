@@ -85,9 +85,10 @@ async def get_faculty_folder_links(page):
         logging.warning("Не найдено ни одной папки факультетов на странице.")
         return []
 
-    folder_locators = await page.locator(folder_selector).all()
-    # Собираем только уникальные ссылки
-    folder_links = [await loc.get_attribute('href') for loc in folder_locators if await loc.get_attribute('href')]
+    # Оптимизация: получаем все атрибуты href за один вызов JS, чтобы избежать таймаутов при итерации
+    folder_links = await page.locator(folder_selector).evaluate_all("els => els.map(e => e.getAttribute('href'))")
+    # Фильтруем None и пустые строки
+    folder_links = [href for href in folder_links if href]
     
     return list(dict.fromkeys(folder_links))
 
@@ -187,12 +188,18 @@ async def get_week_folder_links(page):
         logging.warning("Не найдено ни одной папки недель на странице.")
         return {}
 
-    folder_locators = await page.locator(folder_selector).all()
+    # Оптимизация: получаем данные (href и текст) за один вызов JS
+    items = await page.locator(folder_selector).evaluate_all("""
+        els => els.map(e => ({
+            href: e.getAttribute('href'),
+            text: e.innerText
+        }))
+    """)
     
     week_links = {}
-    for loc in folder_locators:
-        href = await loc.get_attribute('href')
-        name = await loc.inner_text()
+    for item in items:
+        href = item['href']
+        name = item['text']
         if href and name and ('неделя' in name.lower() or 'четная' in name.lower() or 'нечет' in name.lower()):
             week_links[name] = href
             
@@ -203,7 +210,7 @@ async def main():
     browser_args = ['--no-sandbox', '--disable-setuid-sandbox']
     
     async with async_playwright() as p:
-        browser = await p.chromium.launch(headless=True, args=browser_args)
+        browser = await p.chromium.launch(headless=False, args=browser_args)
         context = await browser.new_context(accept_downloads=True)
         page = await context.new_page() 
         try:

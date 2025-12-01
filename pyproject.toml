@@ -12,5 +12,11 @@ dependencies = [
     "aiogram",
     "gitingest",
     "python-decouple>=3.8",
-    "aiosqlite" # <-- ДОБАВЛЕНО
+    "apscheduler",
+    "aiosqlite",
+    "pytest>=7.0.0",
+    "pytest-asyncio>=0.21.0",
+    "pytest-mock>=3.10.0",
+    "pytest-cov>=4.0.0",
+    "faker>=18.0.0"
 ]

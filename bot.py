@@ -19,7 +19,7 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 # ----------------------------------
 
 from aiogram import Bot, Dispatcher, F, types
-from aiogram.filters import CommandStart, BaseFilter, Command
+from aiogram.filters import CommandStart, BaseFilter, Command   
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.storage.memory import MemoryStorage
@@ -34,8 +34,11 @@ from database import (
     initialize_database, load_structure_from_db, 
     save_user_group_db, get_user_group_db, get_all_user_ids, get_all_courses,
     log_broadcast, get_last_broadcast, delete_last_broadcast_log,
-    get_schedule_by_group, get_schedule_by_teacher
+    get_schedule_by_group, get_schedule_by_teacher,
+    save_record_book_number, get_record_book_number,
+    get_user_settings, update_user_settings
 )
+from usurt_scraper import UsurtScraper
 
 # --- КОНФИГУРАЦИЯ (УНИФИКАЦИЯ ПУТЕЙ) ---
 # Используем config, но с дефолтом, который Portainer не должен использовать
@@ -158,6 +161,9 @@ class CourseCallbackFactory(CallbackData, prefix="course"):
     faculty_id: int
 class TeacherSearch(StatesGroup): name, matches = State(), State()
 class Broadcast(StatesGroup): waiting_for_message = State()
+class SessionResults(StatesGroup): waiting_for_record_book_number = State()
+class NoteEdit(StatesGroup): waiting_for_note_text = State()
+class ChecklistAdd(StatesGroup): waiting_for_item_text = State()
 class IsAdmin(BaseFilter):
     async def __call__(self, message: Message) -> bool: return message.from_user.id == ADMIN_ID
 
@@ -220,7 +226,41 @@ def get_teacher_nav_keyboard(current_offset: int):
     builder.button(text="След. день ➡️", callback_data=f"teacher_nav:{current_offset + 1}")
     return builder.as_markup()
 
-day_selection_keyboard = ReplyKeyboardMarkup(keyboard=[[KeyboardButton(text="Сегодня"), KeyboardButton(text="Завтра")], [KeyboardButton(text="Пн"), KeyboardButton(text="Вт"), KeyboardButton(text="Ср")], [KeyboardButton(text="Чт"), KeyboardButton(text="Пт"), KeyboardButton(text="Сб")], [KeyboardButton(text="/start")]], resize_keyboard=True)
+def get_session_results_keyboard():
+    builder = InlineKeyboardBuilder()
+    builder.button(text="📝 Заметки", callback_data="notes_root")
+    builder.button(text="🔄 Обновить", callback_data="refresh_results")
+    builder.button(text="✏️ Изменить номер", callback_data="change_record_book")
+    builder.button(text="⚙️ Настройки", callback_data="session_settings")
+    builder.adjust(2)
+    return builder.as_markup()
+
+def get_settings_keyboard(settings: dict):
+    builder = InlineKeyboardBuilder()
+    
+    # Toggles
+    # hide_5: Hide > 4 (Excellent)
+    # hide_4: Hide > 3 (Good)
+    # hide_3: Hide > 2 (Satisfactory) - usually we want to hide passed exams
+    # hide_passed: Hide all passed (Зачет, 3, 4, 5)
+    # hide_failed: Hide failed (Незачет, Недопуск)
+    
+    s = settings
+    
+    def btn(key, label):
+        status = "✅" if s.get(key, False) else "❌"
+        return InlineKeyboardButton(text=f"{label} {status}", callback_data=f"toggle_setting:{key}")
+
+    builder.row(btn("hide_5", "Скрыть 'Отлично' (5)"))
+    builder.row(btn("hide_4", "Скрыть 'Хорошо' (4)"))
+    builder.row(btn("hide_3", "Скрыть 'Удовл.' (3)"))
+    builder.row(btn("hide_passed_non_exam", "Скрыть 'Зачет'"))
+    builder.row(btn("hide_failed", "Скрыть 'Незачет/Недопуск'"))
+    
+    builder.row(InlineKeyboardButton(text="⬅️ Назад к результатам", callback_data="back_to_results"))
+    return builder.as_markup()
+
+day_selection_keyboard = ReplyKeyboardMarkup(keyboard=[[KeyboardButton(text="Сегодня"), KeyboardButton(text="Завтра")], [KeyboardButton(text="Пн"), KeyboardButton(text="Вт"), KeyboardButton(text="Ср")], [KeyboardButton(text="Чт"), KeyboardButton(text="Пт"), KeyboardButton(text="Сб")], [KeyboardButton(text="📊 Мои результаты"), KeyboardButton(text="/start")]], resize_keyboard=True)
 admin_keyboard = ReplyKeyboardMarkup(keyboard=[[KeyboardButton(text="🔄 Обновить расписание"), KeyboardButton(text="📥 Перезагрузить структуру")], [KeyboardButton(text="⬅️ Выйти из админ-панели")]], resize_keyboard=True)
 
 
@@ -432,6 +472,402 @@ async def send_schedule(message: Message):
         await message.answer(response_text, parse_mode="Markdown")
     except Exception as e:
         logging.error(f"Ошибка при отправке расписания: {e}"); await message.answer("Произошла внутренняя ошибка.")
+
+
+# --- Хэндлеры Результатов Сессии ---
+@dp.message(F.text == "📊 Мои результаты")
+async def show_session_results(message: Message, state: FSMContext):
+    # 1. Проверяем, есть ли номер зачетки в БД
+    record_book_number = await get_record_book_number(message.from_user.id)
+    
+    if not record_book_number:
+        await message.answer(
+            "Для просмотра результатов мне нужно знать номер вашей зачетной книжки.\n"
+            "Пожалуйста, введите его (только цифры):"
+        )
+        await state.set_state(SessionResults.waiting_for_record_book_number)
+        return
+
+    await show_results_view(message, message.from_user.id, record_book_number)
+
+async def show_results_view(target: Message | CallbackQuery, user_id: int, record_book_number: str):
+    # Helper to show results (used by command and back button)
+    
+    if isinstance(target, Message):
+        msg = await target.answer(f"🔍 Ищу результаты для зачетки: *{record_book_number}*...", parse_mode="Markdown")
+    else:
+        # For callback, we might want to edit, but scraping takes time.
+        # Better to answer callback and send new message or edit with "Loading..."
+        await target.message.edit_text(f"🔍 Ищу результаты для зачетки: *{record_book_number}*...", parse_mode="Markdown")
+        msg = target.message
+
+    settings = await get_user_settings(user_id)
+    results_data = await UsurtScraper.get_session_results(record_book_number)
+    
+    if results_data is None:
+        text = "❌ Не удалось получить результаты. Попробуйте позже или проверьте номер зачетки."
+        if isinstance(target, Message):
+            await msg.edit_text(text, reply_markup=get_session_results_keyboard())
+        else:
+            await msg.edit_text(text, reply_markup=get_session_results_keyboard())
+        return
+
+    # Filter and Format
+    formatted_text = format_results(results_data, settings)
+    
+    # Split if too long
+    if len(formatted_text) > 4000:
+        parts = [formatted_text[i:i+4000] for i in range(0, len(formatted_text), 4000)]
+        for i, part in enumerate(parts):
+            markup = get_session_results_keyboard() if i == len(parts) - 1 else None
+            if i == 0:
+                await msg.edit_text(part, parse_mode="Markdown", reply_markup=markup)
+            else:
+                await msg.answer(part, parse_mode="Markdown", reply_markup=markup)
+    else:
+        await msg.edit_text(formatted_text, parse_mode="Markdown", reply_markup=get_session_results_keyboard())
+
+def filter_results_by_settings(data: list, settings: dict) -> list:
+    """
+    Фильтрует результаты сессии согласно настройкам пользователя.
+    Возвращает отфильтрованный список.
+    """
+    filtered = []
+    for item in data:
+        # Filtering Logic
+        if settings.get("hide_5") and item.get('grade_value') == 5: continue
+        if settings.get("hide_4") and item.get('grade_value') == 4: continue
+        if settings.get("hide_3") and item.get('grade_value') == 3: continue
+        
+        # Hide "Зачет" (passed but no grade value)
+        if settings.get("hide_passed_non_exam") and item.get('passed') and item.get('grade_value') is None: continue
+        
+        # Hide Failed
+        if settings.get("hide_failed") and not item.get('passed'): continue
+        
+        filtered.append(item)
+    
+    return filtered
+
+def format_results(data: list, settings: dict) -> str:
+    if not data:
+        return "📭 Результаты не найдены."
+
+    # Apply filters
+    filtered_data = filter_results_by_settings(data, settings)
+    
+    if not filtered_data:
+        return "📭 Все предметы скрыты настройками фильтрации."
+
+    # Group by semester
+    semesters = {}
+    for item in filtered_data:
+        sem = item['semester']
+        if sem not in semesters: semesters[sem] = []
+        semesters[sem].append(item)
+    
+    output = []
+    
+    for sem, items in semesters.items():
+        semester_lines = []
+        for item in items:
+            # Format Line
+            icon = "✅" if item['passed'] else "⚠️"
+            if not item['passed']: icon = "❌"
+            
+            line = f"{icon} *{item['subject']}*\n   🎓 {item['grade']}"
+            if item['date']:
+                line += f" ({item['date']})"
+            
+            semester_lines.append(line)
+        
+        if semester_lines:
+            output.append(f"\n📅 *{sem}*")
+            output.extend(semester_lines)
+        
+    return "\n".join(output)
+
+@dp.callback_query(F.data == "session_settings")
+async def open_settings(callback: CallbackQuery):
+    settings = await get_user_settings(callback.from_user.id)
+    await callback.message.edit_text(
+        "⚙️ *Настройки отображения*\n\n"
+        "Выберите, какие предметы нужно **СКРЫТЬ**:",
+        reply_markup=get_settings_keyboard(settings),
+        parse_mode="Markdown"
+    )
+    await callback.answer()
+
+@dp.callback_query(F.data.startswith("toggle_setting:"))
+async def toggle_setting(callback: CallbackQuery):
+    key = callback.data.split(":")[1]
+    user_id = callback.from_user.id
+    
+    settings = await get_user_settings(user_id)
+    settings[key] = not settings.get(key, False) # Toggle
+    
+    await update_user_settings(user_id, settings)
+    
+    # Update keyboard
+    await callback.message.edit_reply_markup(reply_markup=get_settings_keyboard(settings))
+    await callback.answer("Настройка обновлена")
+
+@dp.callback_query(F.data == "back_to_results")
+async def back_to_results(callback: CallbackQuery):
+    record_book_number = await get_record_book_number(callback.from_user.id)
+    if record_book_number:
+        await show_results_view(callback, callback.from_user.id, record_book_number)
+    else:
+        await callback.message.edit_text("Ошибка: номер зачетки не найден.")
+
+@dp.message(SessionResults.waiting_for_record_book_number)
+async def process_record_book_number(message: Message, state: FSMContext):
+    number = message.text.strip()
+    
+    if not number.isdigit():
+        await message.answer("⚠️ Номер зачетной книжки должен состоять только из цифр. Попробуйте еще раз.")
+        return
+        
+    # Сохраняем в БД
+    await save_record_book_number(message.from_user.id, number)
+    await state.clear()
+    
+    # Сразу вызываем поиск
+    await show_results_view(message, message.from_user.id, number)
+
+@dp.callback_query(F.data == "refresh_results")
+async def refresh_session_results(callback: CallbackQuery):
+    record_book_number = await get_record_book_number(callback.from_user.id)
+    if not record_book_number:
+        await callback.answer("Номер зачетки не найден.")
+        return
+        
+    await callback.message.edit_text(f"🔄 Обновляю результаты для зачетки: *{record_book_number}*...", parse_mode="Markdown")
+    
+    # Force scrape (use_cache=False)
+    # Note: We don't unpack here anymore!
+    data = await UsurtScraper.get_session_results(record_book_number, use_cache=False)
+    
+    if data is None:
+        await callback.message.edit_text("❌ Не удалось обновить результаты.", reply_markup=get_session_results_keyboard())
+    else:
+        # Show updated results
+        await show_results_view(callback, callback.from_user.id, record_book_number)
+    
+    await callback.answer()
+
+
+# --- Хэндлеры Заметок ---
+
+@dp.callback_query(F.data == "notes_root")
+async def notes_root(callback: CallbackQuery):
+    # Показываем список семестров из кэша
+    record_book_number = await get_record_book_number(callback.from_user.id)
+    if not record_book_number:
+        await callback.answer("Сначала получите результаты сессии.")
+        return
+
+    # Получаем данные из кэша (без скрапинга)
+    data = await UsurtScraper.get_session_results(record_book_number, use_cache=True)
+    
+    if not data:
+        await callback.answer("Нет данных о предметах. Обновите результаты.")
+        return
+    
+    # Применяем фильтры пользователя
+    settings = await get_user_settings(callback.from_user.id)
+    filtered_data = filter_results_by_settings(data, settings)
+    
+    if not filtered_data:
+        await callback.answer("Все предметы скрыты фильтрами. Измените настройки.")
+        return
+
+    # Собираем уникальные семестры из отфильтрованных данных
+    semesters = sorted(list(set(d['semester'] for d in filtered_data)))
+    
+    builder = InlineKeyboardBuilder()
+    for sem in semesters:
+        builder.button(text=sem, callback_data=f"notes_sem:{sem}")
+    
+    builder.adjust(1)
+    builder.row(InlineKeyboardButton(text="⬅️ Назад к результатам", callback_data="back_to_results"))
+    
+    await callback.message.edit_text("📂 Выберите семестр для заметок:", reply_markup=builder.as_markup())
+    await callback.answer()
+
+@dp.callback_query(F.data.startswith("notes_sem:"))
+async def notes_semester_select(callback: CallbackQuery):
+    semester = callback.data.split(":", 1)[1]
+    record_book_number = await get_record_book_number(callback.from_user.id)
+    data = await UsurtScraper.get_session_results(record_book_number, use_cache=True)
+    
+    # Применяем фильтры пользователя
+    settings = await get_user_settings(callback.from_user.id)
+    filtered_data = filter_results_by_settings(data, settings)
+    
+    # Фильтруем предметы этого семестра (исключаем пустые)
+    subjects = sorted(list(set(d['subject'] for d in filtered_data if d['semester'] == semester and d['subject'].strip())))
+    
+    builder = InlineKeyboardBuilder()
+    for subj in subjects:
+        # Ограничиваем длину callback_data (64 байта)
+        # Используем хэш или просто обрезаем, но для простоты пока передаем индекс в списке
+        # Но список может меняться... Лучше передать короткое имя или ID если бы был.
+        # Попробуем передать имя, надеясь что оно влезет. Если нет - надо делать mapping.
+        # Для надежности сделаем mapping через временный кэш или просто передадим индекс в отсортированном списке
+        builder.button(text=subj[:30], callback_data=f"notes_subj:{semester}:{subjects.index(subj)}")
+        
+    builder.adjust(1)
+    builder.row(InlineKeyboardButton(text="⬅️ Назад к семестрам", callback_data="notes_root"))
+    
+    await callback.message.edit_text(f"📂 Семестр: {semester}\nВыберите предмет:", reply_markup=builder.as_markup())
+    await callback.answer()
+
+@dp.callback_query(F.data.startswith("notes_subj:"))
+async def notes_subject_view(callback: CallbackQuery, state: FSMContext):
+    try:
+        _, semester, subj_idx_str = callback.data.split(":")
+        subj_idx = int(subj_idx_str)
+        
+        record_book_number = await get_record_book_number(callback.from_user.id)
+        data = await UsurtScraper.get_session_results(record_book_number, use_cache=True)
+        subjects = sorted(list(set(d['subject'] for d in data if d['semester'] == semester)))
+        subject_name = subjects[subj_idx]
+        
+        # Сохраняем контекст
+        await state.update_data(current_subject=subject_name, current_semester=semester)
+        
+        await show_subject_note_view(callback, callback.from_user.id, subject_name, semester)
+    except Exception as e:
+        logging.error(f"Error in notes_subject_view: {e}")
+        await callback.answer("Ошибка при открытии заметки.", show_alert=True)
+
+async def show_subject_note_view(target: Message | CallbackQuery, user_id: int, subject_name: str, semester: str):
+    from database import get_subject_note
+    note_data = await get_subject_note(user_id, subject_name)
+    
+    note_text = note_data.get("note_text", "")
+    checklist = note_data.get("checklist", [])
+    
+    text = f"📝 *{subject_name}*\n\n"
+    if note_text:
+        text += f"{note_text}\n\n"
+    else:
+        text += "_Нет заметки_\n\n"
+        
+    if checklist:
+        text += "*Чек-лист:*\n"
+        for i, item in enumerate(checklist):
+            status = "✅" if item['done'] else "⬜"
+            text += f"{status} {item['text']}\n"
+    else:
+        text += "_Чек-лист пуст_"
+        
+    # Клавиатура
+    builder = InlineKeyboardBuilder()
+    builder.button(text="✏️ Ред. заметку", callback_data="note_edit_text")
+    builder.button(text="➕ Пункт чек-листа", callback_data="note_add_item")
+    
+    # Кнопки для чек-листа
+    for i, item in enumerate(checklist):
+        status_icon = "✅" if item['done'] else "⬜"
+        builder.button(text=f"{status_icon} {item['text'][:15]}...", callback_data=f"note_toggle:{i}")
+        builder.button(text="🗑", callback_data=f"note_del:{i}")
+    
+    builder.adjust(2) # Ред, Добавить
+    # Далее по 2 кнопки на строку (Тоггл, Удалить)
+    
+    builder.row(InlineKeyboardButton(text=f"⬅️ Назад к предметам", callback_data=f"notes_sem:{semester}"))
+    
+    if isinstance(target, Message):
+        await target.edit_text(text, reply_markup=builder.as_markup(), parse_mode="Markdown")
+    else:
+        await target.message.edit_text(text, reply_markup=builder.as_markup(), parse_mode="Markdown")
+
+@dp.callback_query(F.data == "note_edit_text")
+async def note_edit_text_start(callback: CallbackQuery, state: FSMContext):
+    await callback.message.answer("Введите текст заметки:")
+    await state.set_state(NoteEdit.waiting_for_note_text)
+    await callback.answer()
+
+@dp.message(NoteEdit.waiting_for_note_text)
+async def note_edit_text_save(message: Message, state: FSMContext):
+    data = await state.get_data()
+    subject_name = data.get("current_subject")
+    semester = data.get("current_semester")
+    
+    from database import get_subject_note, save_subject_note
+    current_data = await get_subject_note(message.from_user.id, subject_name)
+    
+    await save_subject_note(message.from_user.id, subject_name, message.text, current_data.get("checklist", []))
+    
+    await state.set_state(None) # Clear state but keep data
+    # Restore state data for navigation
+    await state.update_data(current_subject=subject_name, current_semester=semester)
+    
+    # Show updated view (need to find the last message or send new)
+    # Sending new is easier
+    await show_subject_note_view(message, message.from_user.id, subject_name, semester)
+
+@dp.callback_query(F.data == "note_add_item")
+async def note_add_item_start(callback: CallbackQuery, state: FSMContext):
+    await callback.message.answer("Введите текст пункта чек-листа:")
+    await state.set_state(ChecklistAdd.waiting_for_item_text)
+    await callback.answer()
+
+@dp.message(ChecklistAdd.waiting_for_item_text)
+async def note_add_item_save(message: Message, state: FSMContext):
+    data = await state.get_data()
+    subject_name = data.get("current_subject")
+    semester = data.get("current_semester")
+    
+    from database import get_subject_note, save_subject_note
+    current_data = await get_subject_note(message.from_user.id, subject_name)
+    checklist = current_data.get("checklist", [])
+    
+    checklist.append({"text": message.text, "done": False})
+    
+    await save_subject_note(message.from_user.id, subject_name, current_data.get("note_text", ""), checklist)
+    
+    await state.set_state(None)
+    await state.update_data(current_subject=subject_name, current_semester=semester)
+    await show_subject_note_view(message, message.from_user.id, subject_name, semester)
+
+@dp.callback_query(F.data.startswith("note_toggle:"))
+async def note_toggle_item(callback: CallbackQuery, state: FSMContext):
+    idx = int(callback.data.split(":")[1])
+    data = await state.get_data()
+    subject_name = data.get("current_subject")
+    semester = data.get("current_semester")
+    
+    from database import get_subject_note, save_subject_note
+    current_data = await get_subject_note(callback.from_user.id, subject_name)
+    checklist = current_data.get("checklist", [])
+    
+    if 0 <= idx < len(checklist):
+        checklist[idx]['done'] = not checklist[idx]['done']
+        await save_subject_note(callback.from_user.id, subject_name, current_data.get("note_text", ""), checklist)
+        
+    await show_subject_note_view(callback, callback.from_user.id, subject_name, semester)
+    await callback.answer()
+
+@dp.callback_query(F.data.startswith("note_del:"))
+async def note_delete_item(callback: CallbackQuery, state: FSMContext):
+    idx = int(callback.data.split(":")[1])
+    data = await state.get_data()
+    subject_name = data.get("current_subject")
+    semester = data.get("current_semester")
+    
+    from database import get_subject_note, save_subject_note
+    current_data = await get_subject_note(callback.from_user.id, subject_name)
+    checklist = current_data.get("checklist", [])
+    
+    if 0 <= idx < len(checklist):
+        checklist.pop(idx)
+        await save_subject_note(callback.from_user.id, subject_name, current_data.get("note_text", ""), checklist)
+        
+    await show_subject_note_view(callback, callback.from_user.id, subject_name, semester)
+    await callback.answer()
 
 
 # --- Хэндлеры Преподавателей (без изменений, т.к. используют async show_teacher_schedule) ---

@@ -1,6 +1,18 @@
-# Игнорируем специфические файлы проекта
-*.pyc
+# Игнорируем специфические# User-specific files
+.idea/
+.vscode/
+
+# Test and coverage
+.pytest_cache/
+htmlcov/
+.coverage
+*.cover
+.hypothesis/
+.tox/
+
+# Other
 __pycache__/
+*.pyc
 
 # Игнорируем логи и временные данные
 fatal_error_screenshot.png
