@@ -11,6 +11,7 @@ COPY config.py .
 COPY database.py .         
 COPY fetch_schedule.py .
 COPY process_schedules.py .
+COPY usurt_scraper.py .
 COPY bot.py .
 
 # Устанавливаем Python-зависимости

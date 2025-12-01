@@ -29,9 +29,25 @@ async def initialize_database():
         await db.execute("""
             CREATE TABLE IF NOT EXISTS users (
                 user_id INTEGER PRIMARY KEY, 
-                group_name TEXT
+                group_name TEXT,
+                record_book_number TEXT,
+                settings TEXT
             )
         """)
+        
+        # Миграция: добавляем колонку record_book_number, если её нет
+        try:
+            await db.execute("ALTER TABLE users ADD COLUMN record_book_number TEXT")
+            await db.commit()
+        except aiosqlite.OperationalError:
+            pass
+
+        # Миграция: добавляем колонку settings, если её нет
+        try:
+            await db.execute("ALTER TABLE users ADD COLUMN settings TEXT")
+            await db.commit()
+        except aiosqlite.OperationalError:
+            pass
         
         await db.execute("""
             CREATE TABLE IF NOT EXISTS schedule (
@@ -55,6 +71,27 @@ async def initialize_database():
                 message_ids_json TEXT
             )
         """)
+        
+        # Кэш результатов сессии
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS session_cache (
+                record_book_number TEXT PRIMARY KEY,
+                data_json TEXT,
+                last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        
+        # Заметки к предметам
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS subject_notes (
+                user_id INTEGER,
+                subject_name TEXT,
+                note_text TEXT,
+                checklist_json TEXT,
+                PRIMARY KEY (user_id, subject_name)
+            )
+        """)
+        
         await db.commit()
     logging.info("База данных успешно инициализирована (aiosqlite).")
 
@@ -94,7 +131,10 @@ async def load_structure_from_db() -> Tuple[Dict[str, Any], List[str], List[str]
 async def save_user_group_db(user_id: int, group_name: str | None):
     # КОРРЕКТНОЕ ИСПОЛЬЗОВАНИЕ
     async with await get_db_connection() as db:
-        await db.execute("INSERT OR REPLACE INTO users (user_id, group_name) VALUES (?, ?)", (user_id, group_name))
+        await db.execute("""
+            INSERT INTO users (user_id, group_name) VALUES (?, ?)
+            ON CONFLICT(user_id) DO UPDATE SET group_name=excluded.group_name
+        """, (user_id, group_name))
         await db.commit()
 
 async def get_user_group_db(user_id: int) -> str | None:
@@ -106,6 +146,44 @@ async def get_user_group_db(user_id: int) -> str | None:
             # по умолчанию для row_factory = aiosqlite.Row в aiosqlite.fetchone() 
             # без явного установления на уровне курсора или коннекта
             return row[0] if row else None 
+
+async def save_record_book_number(user_id: int, number: str):
+    async with await get_db_connection() as db:
+        # Используем UPDATE, так как пользователь уже должен существовать (создается при /start)
+        # Но на всякий случай используем INSERT OR IGNORE или проверку, 
+        # но логичнее предположить, что юзер уже есть.
+        # Однако, если юзера нет, надо бы его создать.
+        # Лучше использовать UPSERT логику, но у нас SQLite.
+        # INSERT OR REPLACE может затереть group_name, если мы не передадим его.
+        # Поэтому лучше сначала UPDATE.
+        
+        cursor = await db.execute("UPDATE users SET record_book_number = ? WHERE user_id = ?", (number, user_id))
+        if cursor.rowcount == 0:
+            # Если пользователя нет, создаем
+            await db.execute("INSERT INTO users (user_id, record_book_number) VALUES (?, ?)", (user_id, number))
+        await db.commit()
+
+async def get_record_book_number(user_id: int) -> str | None:
+    async with await get_db_connection() as db:
+        async with db.execute("SELECT record_book_number FROM users WHERE user_id = ?", (user_id,)) as cursor:
+            row = await cursor.fetchone()
+            return row[0] if row else None 
+
+async def update_user_settings(user_id: int, settings: dict):
+    async with await get_db_connection() as db:
+        await db.execute("UPDATE users SET settings = ? WHERE user_id = ?", (json.dumps(settings), user_id))
+        await db.commit()
+
+async def get_user_settings(user_id: int) -> dict:
+    async with await get_db_connection() as db:
+        async with db.execute("SELECT settings FROM users WHERE user_id = ?", (user_id,)) as cursor:
+            row = await cursor.fetchone()
+            if row and row[0]:
+                try:
+                    return json.loads(row[0])
+                except json.JSONDecodeError:
+                    return {}
+            return {} 
 
 async def get_all_user_ids() -> List[int]:
     # КОРРЕКТНОЕ ИСПОЛЬЗОВАНИЕ
@@ -167,3 +245,60 @@ async def delete_last_broadcast_log() -> bool:
                 await db.commit()
                 return True
             return False
+
+# --- Кэширование результатов сессии ---
+async def get_cached_session_results(record_book_number: str) -> Tuple[List[dict] | None, str | None]:
+    """
+    Возвращает (data, last_updated_iso_str) или (None, None).
+    """
+    async with await get_db_connection() as db:
+        async with db.execute("SELECT data_json, last_updated FROM session_cache WHERE record_book_number = ?", (record_book_number,)) as cursor:
+            row = await cursor.fetchone()
+            if row:
+                try:
+                    return json.loads(row[0]), row[1]
+                except json.JSONDecodeError:
+                    return None, None
+            return None, None
+
+async def save_cached_session_results(record_book_number: str, data: List[dict]):
+    async with await get_db_connection() as db:
+        await db.execute("""
+            INSERT INTO session_cache (record_book_number, data_json, last_updated) 
+            VALUES (?, ?, CURRENT_TIMESTAMP)
+            ON CONFLICT(record_book_number) DO UPDATE SET 
+                data_json=excluded.data_json, 
+                last_updated=CURRENT_TIMESTAMP
+        """, (record_book_number, json.dumps(data)))
+        await db.commit()
+
+# --- Заметки к предметам ---
+async def get_subject_note(user_id: int, subject_name: str) -> dict:
+    """
+    Возвращает dict с ключами 'note_text' и 'checklist' (list).
+    Если записи нет, возвращает пустую структуру.
+    """
+    async with await get_db_connection() as db:
+        async with db.execute("SELECT note_text, checklist_json FROM subject_notes WHERE user_id = ? AND subject_name = ?", (user_id, subject_name)) as cursor:
+            row = await cursor.fetchone()
+            if row:
+                note_text = row[0] if row[0] else ""
+                checklist = []
+                if row[1]:
+                    try:
+                        checklist = json.loads(row[1])
+                    except json.JSONDecodeError:
+                        checklist = []
+                return {"note_text": note_text, "checklist": checklist}
+            return {"note_text": "", "checklist": []}
+
+async def save_subject_note(user_id: int, subject_name: str, note_text: str, checklist: list):
+    async with await get_db_connection() as db:
+        await db.execute("""
+            INSERT INTO subject_notes (user_id, subject_name, note_text, checklist_json)
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT(user_id, subject_name) DO UPDATE SET
+                note_text=excluded.note_text,
+                checklist_json=excluded.checklist_json
+        """, (user_id, subject_name, note_text, json.dumps(checklist)))
+        await db.commit()
