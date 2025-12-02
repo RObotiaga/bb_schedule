@@ -167,6 +167,27 @@ class ChecklistAdd(StatesGroup): waiting_for_item_text = State()
 class IsAdmin(BaseFilter):
     async def __call__(self, message: Message) -> bool: return message.from_user.id == ADMIN_ID
 
+# --- Reply клавиатуры ---
+from aiogram.types import ReplyKeyboardMarkup, KeyboardButton
+
+day_selection_keyboard = ReplyKeyboardMarkup(
+    keyboard=[
+        [KeyboardButton(text="Сегодня"), KeyboardButton(text="Завтра")],
+        [KeyboardButton(text="Пн"), KeyboardButton(text="Вт"), KeyboardButton(text="Ср")],
+        [KeyboardButton(text="Чт"), KeyboardButton(text="Пт"), KeyboardButton(text="Сб")]
+    ],
+    resize_keyboard=True
+)
+
+admin_keyboard = ReplyKeyboardMarkup(
+    keyboard=[
+        [KeyboardButton(text="🔄 Обновить расписание")],
+        [KeyboardButton(text="📥 Перезагрузить структуру")],
+        [KeyboardButton(text="⬅️ Выйти из админ-панели")]
+    ],
+    resize_keyboard=True
+)
+
 def get_faculties_keyboard():
     builder = InlineKeyboardBuilder()
     [builder.button(text=name, callback_data=f"faculty:{i}") for i, name in enumerate(FACULTIES_LIST)]; builder.adjust(2)
@@ -389,6 +410,33 @@ async def get_course(message: types.Message):
         keyboard.add(types.KeyboardButton(course))
 
     await message.reply("Пожалуйста, выберите курс:", reply_markup=keyboard)
+
+# --- Обработчики кнопок дней недели ---
+@dp.message(F.text.in_(["Сегодня", "Завтра", "Пн", "Вт", "Ср", "Чт", "Пт", "Сб"]))
+async def day_button_handler(message: Message):
+    user_group = await get_user_group_db(message.from_user.id)
+    
+    if not user_group:
+        await message.answer(
+            "ℹ️ Сначала выберите вашу группу.",
+            reply_markup=get_faculties_keyboard()
+        )
+        return
+    
+    # Определяем offset для дня
+    day_mapping = {
+        "Сегодня": 0,
+        "Завтра": 1,
+        "Пн": 0 - datetime.now().weekday(),  # Monday
+        "Вт": 1 - datetime.now().weekday(),  # Tuesday
+        "Ср": 2 - datetime.now().weekday(),  # Wednesday
+        "Чт": 3 - datetime.now().weekday(),  # Thursday
+        "Пт": 4 - datetime.now().weekday(),  # Friday
+        "Сб": 5 - datetime.now().weekday(),  # Saturday
+    }
+    
+    day_offset = day_mapping.get(message.text, 0)
+    await show_schedule(message, user_group, day_offset)
 
 # --- Хэндлеры Студентов (Выбор группы) ---
 @dp.callback_query(F.data.startswith("faculty:"))
