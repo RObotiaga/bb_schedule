@@ -7,23 +7,21 @@ class UsurtScraper:
     BASE_URL = "http://report.usurt.ru/uspev.aspx"
 
     @staticmethod
-    async def get_session_results(record_book_number: str, use_cache: bool = True) -> List[Dict[str, Any]] | None:
+    async def get_session_results(record_book_number: str, use_cache: bool = True) -> tuple[str, List[Dict[str, Any]] | None]:
         """
         Fetches session results.
-        If use_cache is True, tries to load from DB first (TTL 1 hour).
+        Returns: (status, data)
+        Status: "SUCCESS", "NOT_FOUND", "ERROR"
         """
         from database import get_cached_session_results, save_cached_session_results
         from datetime import datetime, timedelta, timezone
 
         if use_cache:
             cached_data, last_updated_str = await get_cached_session_results(record_book_number)
-            if cached_data and last_updated_str:
+            if cached_data is not None: # Check if cache exists (even if empty list)
                 # Check TTL (1 hour)
-                # SQLite CURRENT_TIMESTAMP is usually UTC
                 try:
                     last_updated = datetime.fromisoformat(last_updated_str)
-                    # Ensure timezone awareness if needed, but usually simple diff works if both are same source
-                    # Assuming UTC for simplicity or naive
                     if last_updated.tzinfo is None:
                         last_updated = last_updated.replace(tzinfo=timezone.utc)
                     
@@ -31,7 +29,7 @@ class UsurtScraper:
                     
                     if now - last_updated < timedelta(hours=1):
                         logging.info(f"Using cached session results for {record_book_number}")
-                        return cached_data
+                        return "SUCCESS", cached_data
                 except Exception as e:
                     logging.warning(f"Cache date parse error: {e}")
 
@@ -53,7 +51,7 @@ class UsurtScraper:
                 content = await page.content()
                 if "Дисциплина" not in content:
                     if "не найден" in content or "Error" in content:
-                         return None # Indicate error/not found
+                         return "NOT_FOUND", None
                 
                 rows = page.locator("tr")
                 count = await rows.count()
@@ -83,10 +81,6 @@ class UsurtScraper:
                     non_empty_cells = [c for c in cell_texts if c]
                     
                     # --- 1. Semester Header Detection ---
-                    # Check if row is a semester header.
-                    # Criteria: 
-                    # - Single non-empty cell
-                    # - Contains "семестр" OR is just a digit (1, 2, 3...)
                     if len(non_empty_cells) == 1:
                         text = non_empty_cells[0]
                         if "семестр" in text.lower() or text.isdigit():
@@ -94,7 +88,6 @@ class UsurtScraper:
                             continue
 
                     # --- 2. Data Row Parsing ---
-                    # Find the cell that contains the grade
                     grade_index = -1
                     grade_text = ""
                     
@@ -103,37 +96,27 @@ class UsurtScraper:
                         if any(k in cell_lower for k in grade_keywords):
                             grade_index = idx
                             grade_text = cell
-                            # We found a grade, stop looking (assuming grade is the first match or we take the first one)
-                            # Usually grade is unique in the row.
                             break
                     
                     if grade_index == -1:
-                        continue # Not a result row
+                        continue 
                         
                     # --- 3. Extract Subject and Grade ---
-                    # Check for "Subject (Grade)" format
-                    # Regex to find (Grade) at the end
                     kw_pattern = "|".join(grade_keywords)
-                    # Regex: Capture Subject (group 1) and Grade (group 2) inside parens at the end
                     regex = re.compile(r"(.+)\s+\((" + kw_pattern + r")\)\s*$", re.IGNORECASE)
                     
                     match = regex.match(grade_text)
                     if match:
-                        # Combined cell
                         subject = match.group(1).strip()
-                        grade = match.group(2).strip() # Extract just the grade text
+                        grade = match.group(2).strip()
                     else:
-                        # Separate cells
-                        # Subject is all text before the grade cell
                         subject = " ".join([c for c in cell_texts[:grade_index] if c])
                         grade = grade_text
                     
-                    # Cleanup subject if needed
                     if "Дисциплина" in subject: continue
                     if not subject.strip(): continue
 
                     # --- 4. Extract Date ---
-                    # Usually the cell after the grade
                     date_val = ""
                     if grade_index < len(cell_texts) - 1:
                         date_val = cell_texts[grade_index + 1]
@@ -164,21 +147,24 @@ class UsurtScraper:
                     results.append({
                         'semester': current_semester,
                         'subject': subject,
-                        'grade': grade, # Now contains clean grade or full text if not split
+                        'grade': grade,
                         'date': date_val,
                         'grade_value': grade_value,
                         'is_exam': is_exam,
                         'passed': passed
                     })
                 
-                # Save to cache
+                # Save to cache even if empty (to avoid re-scraping empty results immediately if that's valid)
+                # But usually empty results means something is wrong or student has no grades.
+                # Let's save if we found something or if we are sure it's a valid empty state.
+                # For now, save if results exist.
                 if results:
                     await save_cached_session_results(record_book_number, results)
 
-                return results
+                return "SUCCESS", results
 
             except Exception as e:
                 logging.error(f"Error scraping USURT: {e}")
-                return None
+                return "ERROR", None
             finally:
                 await browser.close()

@@ -128,9 +128,10 @@ async def test_get_session_results_with_cache(mocker, sample_session_results):
     mock_get_cache.return_value = (sample_session_results, now_str)
     
     # Вызываем функцию
-    result = await UsurtScraper.get_session_results("12345", use_cache=True)
+    status, result = await UsurtScraper.get_session_results("12345", use_cache=True)
     
     # Проверяем, что вернулись кэшированные данные
+    assert status == "SUCCESS"
     assert result == sample_session_results
     mock_get_cache.assert_called_once_with("12345")
     # Кэш НЕ должен перезаписываться, т.к. использовали свежий кэш

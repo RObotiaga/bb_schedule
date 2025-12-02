@@ -118,18 +118,10 @@ def main():
     # Таблицы должны быть созданы, прежде чем мы попытаемся в них что-то писать/удалять.
     create_db_tables(conn)
 
-    cursor = conn.cursor()
-
-    # 3. Очистка старых данных перед записью новых (ХОТЯ МЫ УЖЕ УДАЛИЛИ ФАЙЛ, 
-    # этот DELETE может быть полезен, если мы решим не удалять файл БД в будущем. 
-    # В текущей логике это избыточно, но безопасно, т.к. таблица существует.)
-    logging.info("Очистка старых данных из таблицы 'schedule'...")
-    cursor.execute("DELETE FROM schedule;")
-    conn.commit()
-    
+    # 3. Парсинг файлов (БЕЗ удаления данных из БД пока)
     all_lessons_to_insert = []
 
-    print("Начинаем обработку файлов расписания...")
+    logging.info("Начинаем обработку файлов расписания...")
     for dirpath, _, filenames in os.walk(SCHEDULES_DIR):
         if dirpath == SCHEDULES_DIR:
             continue
@@ -163,7 +155,6 @@ def main():
 
             # Поиск строки с заголовком 'День'
             header_row_index = -1
-            header_mapping = {} # Для обработки столбцов с разными названиями
             
             for i, row in df.iterrows():
                 row_str = [str(cell) for cell in row.tolist()]
@@ -172,13 +163,9 @@ def main():
                 if 'День' in row_str:
                     header_row_index = i
                     break
-                # Или ищем альтернативные, если таблица на английском или имеет другой формат
+                # Или ищем альтернативные
                 if 'Day' in row_str and 'Time' in row_str:
                     header_row_index = i
-                    header_mapping = {
-                        'День': 'Day',
-                        'Часы': 'Time'
-                    }
                     break
 
             if header_row_index == -1:
@@ -195,7 +182,7 @@ def main():
             time_col_name = 'Часы' if 'Часы' in df.columns else ('Time' if 'Time' in df.columns else None)
 
             if not day_col_name or not time_col_name:
-                 print("      Не найдены ключевые столбцы ('День'/'Часы'). Пропуск.")
+                 logging.warning("      Не найдены ключевые столбцы ('День'/'Часы'). Пропуск.")
                  continue
 
             # Определяем столбцы, которые являются группами
@@ -223,20 +210,37 @@ def main():
                             week_type, faculty, course
                         ))
 
+    # 4. Проверка результатов и обновление БД
     if not all_lessons_to_insert:
-        print("\nНе было найдено ни одной пары для добавления. База данных создана, но пуста.")
+        logging.warning("\n⚠️ Не было найдено ни одной пары для добавления. База данных НЕ обновлена (старые данные сохранены).")
         conn.close()
         return
 
-    logging.info(f"\nЗапись {len(all_lessons_to_insert)} пар в базу данных...")
-    cursor.executemany("""
-    INSERT INTO schedule (group_name, lesson_date, time, subject, teacher, location, week_type, faculty, course)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-    """, all_lessons_to_insert)
-    conn.commit()
-    conn.close()
+    logging.info(f"\nНайдено {len(all_lessons_to_insert)} пар. Обновляем базу данных...")
     
-    logging.info(f"\nГотово! База данных '{os.path.basename(DB_PATH)}' успешно обновлена.")
+    try:
+        cursor = conn.cursor()
+        # Используем транзакцию для атомарного обновления
+        cursor.execute("BEGIN TRANSACTION;")
+        
+        logging.info("Очистка старых данных из таблицы 'schedule'...")
+        cursor.execute("DELETE FROM schedule;")
+        
+        logging.info(f"Запись новых данных...")
+        cursor.executemany("""
+        INSERT INTO schedule (group_name, lesson_date, time, subject, teacher, location, week_type, faculty, course)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, all_lessons_to_insert)
+        
+        conn.commit()
+        logging.info(f"\n✅ Готово! База данных '{os.path.basename(DB_PATH)}' успешно обновлена.")
+        
+    except Exception as e:
+        conn.rollback()
+        logging.error(f"\n❌ Ошибка при обновлении БД: {e}. Изменения отменены.")
+        sys.exit(1)
+    finally:
+        conn.close()
 
 if __name__ == "__main__":
     main()

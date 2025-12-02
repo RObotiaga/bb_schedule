@@ -157,7 +157,7 @@ async def test_notes_root_handler_with_data(mock_callback_query, mocker, sample_
     
     # Mock DB calls
     mocker.patch('bot.get_record_book_number', return_value="12345")
-    mocker.patch('bot.UsurtScraper.get_session_results', return_value=sample_session_results)
+    mocker.patch('bot.UsurtScraper.get_session_results', return_value=("SUCCESS", sample_session_results))
     mocker.patch('bot.get_user_settings', return_value={})
     
     await notes_root(mock_callback_query)
@@ -176,7 +176,7 @@ async def test_refresh_results_handler(mock_callback_query, mocker, sample_sessi
     # Mock DB
     mocker.patch('bot.get_record_book_number', return_value="99999")
     # Mock scraper (force refresh)
-    mocker.patch('bot.UsurtScraper.get_session_results', return_value=sample_session_results)
+    mocker.patch('bot.UsurtScraper.get_session_results', return_value=("SUCCESS", sample_session_results))
     # Mock show_results_view
     mock_show = mocker.patch('bot.show_results_view')
     

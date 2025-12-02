@@ -29,7 +29,14 @@ from aiogram.filters.callback_data import CallbackData
 from aiogram.types.error_event import ErrorEvent
 
 # --- НОВЫЕ ИМПОРТЫ ---
-from config import DB_PATH 
+from config import DB_PATH
+from utils import setup_logging
+from keyboards import (
+    CourseCallbackFactory, day_selection_keyboard, admin_keyboard,
+    get_faculties_keyboard, get_courses_keyboard, get_groups_keyboard,
+    get_teacher_choices_keyboard, get_teacher_nav_keyboard,
+    get_session_results_keyboard, get_settings_keyboard
+) 
 from database import (
     initialize_database, load_structure_from_db, 
     save_user_group_db, get_user_group_db, get_all_user_ids, get_all_courses,
@@ -156,9 +163,6 @@ async def perform_full_update(bot: Bot, admin_id: int, target_message: Optional[
 # Инициализация БД и загрузка структуры перенесены в async функцию main()
 
 # --- FSM, Фильтры, Клавиатуры (без изменений) ---
-class CourseCallbackFactory(CallbackData, prefix="course"):
-    course_id: int
-    faculty_id: int
 class TeacherSearch(StatesGroup): name, matches = State(), State()
 class Broadcast(StatesGroup): waiting_for_message = State()
 class SessionResults(StatesGroup): waiting_for_record_book_number = State()
@@ -166,123 +170,6 @@ class NoteEdit(StatesGroup): waiting_for_note_text = State()
 class ChecklistAdd(StatesGroup): waiting_for_item_text = State()
 class IsAdmin(BaseFilter):
     async def __call__(self, message: Message) -> bool: return message.from_user.id == ADMIN_ID
-
-# --- Reply клавиатуры ---
-from aiogram.types import ReplyKeyboardMarkup, KeyboardButton
-
-day_selection_keyboard = ReplyKeyboardMarkup(
-    keyboard=[
-        [KeyboardButton(text="Сегодня"), KeyboardButton(text="Завтра")],
-        [KeyboardButton(text="Пн"), KeyboardButton(text="Вт"), KeyboardButton(text="Ср")],
-        [KeyboardButton(text="Чт"), KeyboardButton(text="Пт"), KeyboardButton(text="Сб")]
-    ],
-    resize_keyboard=True
-)
-
-admin_keyboard = ReplyKeyboardMarkup(
-    keyboard=[
-        [KeyboardButton(text="🔄 Обновить расписание")],
-        [KeyboardButton(text="📥 Перезагрузить структуру")],
-        [KeyboardButton(text="⬅️ Выйти из админ-панели")]
-    ],
-    resize_keyboard=True
-)
-
-def get_faculties_keyboard():
-    builder = InlineKeyboardBuilder()
-    [builder.button(text=name, callback_data=f"faculty:{i}") for i, name in enumerate(FACULTIES_LIST)]; builder.adjust(2)
-    return builder.as_markup()
-def get_courses_keyboard(faculty_id: int): # <--- Ожидаем число (ID)
-    # Используем ID для получения имени факультета (строки)
-    faculty = FACULTIES_LIST[faculty_id] 
-    
-    builder = InlineKeyboardBuilder()
-    courses = sorted(structured_data.get(faculty, {}).keys(), key=lambda c: int(c) if c.isdigit() else 99)
-    
-    if not courses:
-         logging.warning(f"Не найдены курсы для факультета: {faculty}")
-         # Если курсов нет, возвращаем только кнопку "Назад"
-         builder.row(InlineKeyboardButton(text="⬅️ Назад к факультетам", callback_data="back_to_faculties"))
-         return builder.as_markup()
-         
-    for course in courses:
-        # Убедимся, что 'course' можно безопасно конвертировать в int для CourseCallbackFactory
-        try:
-            course_int = int(course)
-        except ValueError:
-             logging.error(f"Не удалось конвертировать курс '{course}' в число. Пропуск.")
-             continue
-             
-        builder.button(
-            text=f"{course} курс",
-            # Передаем числа в фабрику
-            callback_data=CourseCallbackFactory(course_id=course_int, faculty_id=faculty_id)
-        )
-        
-    builder.adjust(2)
-    builder.row(InlineKeyboardButton(text="⬅️ Назад к факультетам", callback_data="back_to_faculties"))
-    return builder.as_markup()
-def get_groups_keyboard(faculty: str, course: str):
-    builder = InlineKeyboardBuilder()
-    groups = sorted(structured_data.get(faculty, {}).get(course, []))
-    [builder.button(text=g, callback_data=f"group:{g}") for g in groups]; builder.adjust(2)
-    
-    # --- ИСПРАВЛЕНИЕ ЗДЕСЬ ---
-    # FACULTIES_LIST.index(faculty) возвращает ID (число)
-    faculty_id = FACULTIES_LIST.index(faculty) 
-    
-    builder.row(InlineKeyboardButton(
-        text=f"⬅️ Назад к курсам ({faculty})", 
-        # Передаем ID, а не строковое имя в колбэк-дату
-        callback_data=f"back_to_courses:{faculty_id}" 
-    ))
-    return builder.as_markup()
-def get_teacher_choices_keyboard(teachers: List[str]):
-    builder = InlineKeyboardBuilder()
-    [builder.button(text=name, callback_data=f"teacher_select:{i}") for i, name in enumerate(teachers)]; builder.adjust(1)
-    return builder.as_markup()
-def get_teacher_nav_keyboard(current_offset: int):
-    builder = InlineKeyboardBuilder()
-    builder.button(text="⬅️ Пред. день", callback_data=f"teacher_nav:{current_offset - 1}")
-    builder.button(text="След. день ➡️", callback_data=f"teacher_nav:{current_offset + 1}")
-    return builder.as_markup()
-
-def get_session_results_keyboard():
-    builder = InlineKeyboardBuilder()
-    builder.button(text="📝 Заметки", callback_data="notes_root")
-    builder.button(text="🔄 Обновить", callback_data="refresh_results")
-    builder.button(text="✏️ Изменить номер", callback_data="change_record_book")
-    builder.button(text="⚙️ Настройки", callback_data="session_settings")
-    builder.adjust(2)
-    return builder.as_markup()
-
-def get_settings_keyboard(settings: dict):
-    builder = InlineKeyboardBuilder()
-    
-    # Toggles
-    # hide_5: Hide > 4 (Excellent)
-    # hide_4: Hide > 3 (Good)
-    # hide_3: Hide > 2 (Satisfactory) - usually we want to hide passed exams
-    # hide_passed: Hide all passed (Зачет, 3, 4, 5)
-    # hide_failed: Hide failed (Незачет, Недопуск)
-    
-    s = settings
-    
-    def btn(key, label):
-        status = "✅" if s.get(key, False) else "❌"
-        return InlineKeyboardButton(text=f"{label} {status}", callback_data=f"toggle_setting:{key}")
-
-    builder.row(btn("hide_5", "Скрыть 'Отлично' (5)"))
-    builder.row(btn("hide_4", "Скрыть 'Хорошо' (4)"))
-    builder.row(btn("hide_3", "Скрыть 'Удовл.' (3)"))
-    builder.row(btn("hide_passed_non_exam", "Скрыть 'Зачет'"))
-    builder.row(btn("hide_failed", "Скрыть 'Незачет/Недопуск'"))
-    
-    builder.row(InlineKeyboardButton(text="⬅️ Назад к результатам", callback_data="back_to_results"))
-    return builder.as_markup()
-
-day_selection_keyboard = ReplyKeyboardMarkup(keyboard=[[KeyboardButton(text="Сегодня"), KeyboardButton(text="Завтра")], [KeyboardButton(text="Пн"), KeyboardButton(text="Вт"), KeyboardButton(text="Ср")], [KeyboardButton(text="Чт"), KeyboardButton(text="Пт"), KeyboardButton(text="Сб")], [KeyboardButton(text="📊 Мои результаты"), KeyboardButton(text="/start")]], resize_keyboard=True)
-admin_keyboard = ReplyKeyboardMarkup(keyboard=[[KeyboardButton(text="🔄 Обновить расписание"), KeyboardButton(text="📥 Перезагрузить структуру")], [KeyboardButton(text="⬅️ Выйти из админ-панели")]], resize_keyboard=True)
 
 
 
@@ -298,7 +185,7 @@ async def process_course_choice_factory(callback: CallbackQuery, callback_data: 
     
     await callback.message.edit_text(
         f"Факультет: *{faculty_name}*, Курс: *{course_name}*.\n\nВыберите вашу группу:", 
-        reply_markup=get_groups_keyboard(faculty_name, course_name), 
+        reply_markup=get_groups_keyboard(faculty_name, course_name, FACULTIES_LIST, structured_data), 
         parse_mode="Markdown"
     )
     await callback.answer()
@@ -319,6 +206,23 @@ def format_schedule_message(group: str, target_date: date, lessons: List[sqlite3
     # Note: access fields by key ['time']
     lesson_parts = [f"⏰ {lesson['time']}\n-  `{lesson['subject']}`\n-  `{lesson['teacher']}`\n-  `{lesson['location']}`" for lesson in lessons]
     return f"{header}\n\n" + "\n\n".join(lesson_parts)
+
+async def show_schedule(target: Message | CallbackQuery, group: str, day_offset: int):
+    target_date = date.today() + timedelta(days=day_offset)
+    date_str = target_date.strftime("%Y-%m-%d")
+    
+    # Получаем расписание из БД
+    lessons = await get_schedule_by_group(group, date_str)
+    
+    # Форматируем сообщение
+    text = format_schedule_message(group, target_date, lessons)
+    
+    # Отправляем
+    if isinstance(target, Message):
+        await target.answer(text, parse_mode="Markdown")
+    elif isinstance(target, CallbackQuery):
+        await target.message.edit_text(text, parse_mode="Markdown")
+        await target.answer()
 
 async def show_teacher_schedule(target: Message | CallbackQuery, teacher_name: str, day_offset: int):
     target_date = date.today() + timedelta(days=day_offset)
@@ -391,7 +295,7 @@ async def send_welcome(message: Message):
         await message.answer("👋 Добро пожаловать! Я помогу вам узнать расписание.\n\n"
                              "Для поиска по группе - выберите ваш факультет.\n"
                              "Для поиска по преподавателю - просто напишите его фамилию.",
-                             reply_markup=get_faculties_keyboard())
+                             reply_markup=get_faculties_keyboard(FACULTIES_LIST))
 
 @dp.message(lambda message: message.text in ["Show schedule for a course", "Показать расписание для курса"])
 async def get_course(message: types.Message):
@@ -451,14 +355,14 @@ async def process_faculty_choice(callback: CallbackQuery):
     # ТЕПЕРЬ ПЕРЕДАЕМ ЧИСЛОВОЙ ID в get_courses_keyboard
     await callback.message.edit_text(
         f"Вы выбрали: *{faculty_name}*.\n\nТеперь выберите курс:", 
-        reply_markup=get_courses_keyboard(faculty_id), # <-- Передаем ID (число)
+        reply_markup=get_courses_keyboard(faculty_id, FACULTIES_LIST, structured_data), # <-- Передаем ID (число)
         parse_mode="Markdown"
     )
     await callback.answer()
 @dp.callback_query(F.data.startswith("course:"))
 async def process_course_choice(callback: CallbackQuery):
     _, faculty, course = callback.data.split(":")
-    await callback.message.edit_text(f"Факультет: *{faculty}*, Курс: *{course}*.\n\nВыберите вашу группу:", reply_markup=get_groups_keyboard(faculty, course), parse_mode="Markdown")
+    await callback.message.edit_text(f"Факультет: *{faculty}*, Курс: *{course}*.\n\nВыберите вашу группу:", reply_markup=get_groups_keyboard(faculty, course, FACULTIES_LIST, structured_data), parse_mode="Markdown")
     await callback.answer()
 @dp.callback_query(F.data.startswith("group:"))
 async def process_group_choice(callback: CallbackQuery):
@@ -470,7 +374,7 @@ async def process_group_choice(callback: CallbackQuery):
     await callback.answer()
 @dp.callback_query(F.data == "back_to_faculties")
 async def back_to_faculties(callback: CallbackQuery):
-    await callback.message.edit_text("Пожалуйста, выберите ваш факультет:", reply_markup=get_faculties_keyboard())
+    await callback.message.edit_text("Пожалуйста, выберите ваш факультет:", reply_markup=get_faculties_keyboard(FACULTIES_LIST))
     await callback.answer()
 @dp.callback_query(F.data.startswith("back_to_courses:"))
 async def back_to_courses(callback: CallbackQuery):
@@ -479,7 +383,7 @@ async def back_to_courses(callback: CallbackQuery):
         faculty_id = int(callback.data.split(":")[1])
     except (ValueError, IndexError):
         await callback.answer("Ошибка навигации: неверный формат ID факультета.", show_alert=True)
-        await callback.message.edit_text("Пожалуйста, выберите ваш факультет:", reply_markup=get_faculties_keyboard())
+        await callback.message.edit_text("Пожалуйста, выберите ваш факультет:", reply_markup=get_faculties_keyboard(FACULTIES_LIST))
         return
 
     faculty_name = FACULTIES_LIST[faculty_id]
@@ -487,7 +391,7 @@ async def back_to_courses(callback: CallbackQuery):
     # Передаем ЧИСЛОВОЙ ID в get_courses_keyboard
     await callback.message.edit_text(
         f"Вы выбрали: *{faculty_name}*.\n\nТеперь выберите курс:", 
-        reply_markup=get_courses_keyboard(faculty_id), 
+        reply_markup=get_courses_keyboard(faculty_id, FACULTIES_LIST, structured_data), 
         parse_mode="Markdown"
     )
     await callback.answer()
@@ -550,10 +454,17 @@ async def show_results_view(target: Message | CallbackQuery, user_id: int, recor
         msg = target.message
 
     settings = await get_user_settings(user_id)
-    results_data = await UsurtScraper.get_session_results(record_book_number)
+    status, results_data = await UsurtScraper.get_session_results(record_book_number)
     
-    if results_data is None:
-        text = "❌ Не удалось получить результаты. Попробуйте позже или проверьте номер зачетки."
+    if status == "NOT_FOUND":
+        text = "❌ Зачетная книжка не найдена. Проверьте номер."
+        if isinstance(target, Message):
+            await msg.edit_text(text, reply_markup=get_session_results_keyboard())
+        else:
+            await msg.edit_text(text, reply_markup=get_session_results_keyboard())
+        return
+    elif status == "ERROR" or results_data is None:
+        text = "❌ Ошибка при получении данных. Попробуйте позже."
         if isinstance(target, Message):
             await msg.edit_text(text, reply_markup=get_session_results_keyboard())
         else:
@@ -693,11 +604,12 @@ async def refresh_session_results(callback: CallbackQuery):
     await callback.message.edit_text(f"🔄 Обновляю результаты для зачетки: *{record_book_number}*...", parse_mode="Markdown")
     
     # Force scrape (use_cache=False)
-    # Note: We don't unpack here anymore!
-    data = await UsurtScraper.get_session_results(record_book_number, use_cache=False)
+    # Force scrape (use_cache=False)
+    status, data = await UsurtScraper.get_session_results(record_book_number, use_cache=False)
     
-    if data is None:
-        await callback.message.edit_text("❌ Не удалось обновить результаты.", reply_markup=get_session_results_keyboard())
+    if status != "SUCCESS" or data is None:
+        error_text = "❌ Зачетка не найдена." if status == "NOT_FOUND" else "❌ Ошибка сети."
+        await callback.message.edit_text(error_text, reply_markup=get_session_results_keyboard())
     else:
         # Show updated results
         await show_results_view(callback, callback.from_user.id, record_book_number)
@@ -716,9 +628,9 @@ async def notes_root(callback: CallbackQuery):
         return
 
     # Получаем данные из кэша (без скрапинга)
-    data = await UsurtScraper.get_session_results(record_book_number, use_cache=True)
+    status, data = await UsurtScraper.get_session_results(record_book_number, use_cache=True)
     
-    if not data:
+    if status != "SUCCESS" or not data:
         await callback.answer("Нет данных о предметах. Обновите результаты.")
         return
     
@@ -747,7 +659,13 @@ async def notes_root(callback: CallbackQuery):
 async def notes_semester_select(callback: CallbackQuery):
     semester = callback.data.split(":", 1)[1]
     record_book_number = await get_record_book_number(callback.from_user.id)
-    data = await UsurtScraper.get_session_results(record_book_number, use_cache=True)
+    semester = callback.data.split(":", 1)[1]
+    record_book_number = await get_record_book_number(callback.from_user.id)
+    status, data = await UsurtScraper.get_session_results(record_book_number, use_cache=True)
+    
+    if status != "SUCCESS" or not data:
+        await callback.answer("Ошибка доступа к данным.")
+        return
     
     # Применяем фильтры пользователя
     settings = await get_user_settings(callback.from_user.id)
@@ -778,7 +696,11 @@ async def notes_subject_view(callback: CallbackQuery, state: FSMContext):
         subj_idx = int(subj_idx_str)
         
         record_book_number = await get_record_book_number(callback.from_user.id)
-        data = await UsurtScraper.get_session_results(record_book_number, use_cache=True)
+        record_book_number = await get_record_book_number(callback.from_user.id)
+        status, data = await UsurtScraper.get_session_results(record_book_number, use_cache=True)
+        if status != "SUCCESS" or not data:
+            await callback.answer("Ошибка данных.")
+            return
         subjects = sorted(list(set(d['subject'] for d in data if d['semester'] == semester)))
         subject_name = subjects[subj_idx]
         
