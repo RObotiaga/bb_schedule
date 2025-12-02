@@ -1,2 +1,14 @@
-schedules
-gitingest.py
+.git
+.venv
+venv
+__pycache__
+.env
+.idea
+.vscode
+*.pyc
+*.pyo
+*.pyd
+.DS_Store
+tests/
+# Ignore local data if it exists, as it should be mounted
+data/
