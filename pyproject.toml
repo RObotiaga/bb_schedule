@@ -6,7 +6,7 @@ readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
     "requests>=2.32.5",
-    "playwright",
+    "playwright==1.55.0",
     "pandas",
     "xlrd",
     "aiogram",

@@ -1,5 +1,5 @@
 # Используем образ с установленными зависимостями Playwright
-FROM mcr.microsoft.com/playwright/python:v1.56.0-jammy
+FROM mcr.microsoft.com/playwright/python:v1.55.0-jammy
 
 # Устанавливаем рабочую директорию
 WORKDIR /app
