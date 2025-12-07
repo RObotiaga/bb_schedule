@@ -328,18 +328,21 @@ async def day_button_handler(message: Message):
         return
     
     # Определяем offset для дня
-    day_mapping = {
-        "Сегодня": 0,
-        "Завтра": 1,
-        "Пн": 0 - datetime.now().weekday(),  # Monday
-        "Вт": 1 - datetime.now().weekday(),  # Tuesday
-        "Ср": 2 - datetime.now().weekday(),  # Wednesday
-        "Чт": 3 - datetime.now().weekday(),  # Thursday
-        "Пт": 4 - datetime.now().weekday(),  # Friday
-        "Сб": 5 - datetime.now().weekday(),  # Saturday
-    }
+    today_weekday = datetime.now().weekday()
     
-    day_offset = day_mapping.get(message.text, 0)
+    if message.text == "Сегодня":
+        day_offset = 0
+    elif message.text == "Завтра":
+        day_offset = 1
+    else:
+        days_map = {"Пн": 0, "Вт": 1, "Ср": 2, "Чт": 3, "Пт": 4, "Сб": 5}
+        target_weekday = days_map.get(message.text, 0)
+        
+        # Логика: если день уже прошел на этой неделе, берем следующую неделю.
+        # Используем % 7 для циклического смещения.
+        # Пример: Сегодня Ср (2). Жмем Пн (0). (0 - 2) % 7 = -2 % 7 = 5. (5 дней вперед)
+        day_offset = (target_weekday - today_weekday) % 7
+    
     await show_schedule(message, user_group, day_offset)
 
 # --- Хэндлеры Студентов (Выбор группы) ---
@@ -396,34 +399,6 @@ async def back_to_courses(callback: CallbackQuery):
     )
     await callback.answer()
 
-# --- Хэндлеры Студентов (Расписание по дням) ---
-def get_date_by_day_name(day_name: str) -> date:
-    today = date.today()
-    if day_name == "Сегодня": return today
-    if day_name == "Завтра": return today + timedelta(days=1)
-    days_map = {"Пн": 0, "Вт": 1, "Ср": 2, "Чт": 3, "Пт": 4, "Сб": 5}
-    target_weekday = days_map[day_name]
-    days_ahead = target_weekday - today.weekday()
-    if days_ahead < 0: days_ahead += 7
-    return today + timedelta(days_ahead)
-
-
-@dp.message(F.text.in_({"Сегодня", "Завтра", "Пн", "Вт", "Ср", "Чт", "Пт", "Сб"}))
-async def send_schedule(message: Message):
-    # Используем async DB call
-    group = await get_user_group_db(message.from_user.id)
-    if not group: await message.answer("Пожалуйста, сначала выберите группу /start"); return
-    try:
-        target_date = get_date_by_day_name(message.text)
-        date_str = target_date.strftime('%Y-%m-%d')
-        
-        # ИСПОЛЬЗУЕМ АСИНХРОННЫЙ DAL
-        lessons = await get_schedule_by_group(group, date_str)
-        
-        response_text = format_schedule_message(group, target_date, lessons)
-        await message.answer(response_text, parse_mode="Markdown")
-    except Exception as e:
-        logging.error(f"Ошибка при отправке расписания: {e}"); await message.answer("Произошла внутренняя ошибка.")
 
 
 # --- Хэндлеры Результатов Сессии ---
