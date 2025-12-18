@@ -569,6 +569,12 @@ async def process_record_book_number(message: Message, state: FSMContext):
     # Сразу вызываем поиск
     await show_results_view(message, message.from_user.id, number)
 
+@dp.callback_query(F.data == "change_record_book")
+async def change_record_book_start(callback: CallbackQuery, state: FSMContext):
+    await callback.message.answer("Пожалуйста, введите новый номер зачетной книжки (только цифры):")
+    await state.set_state(SessionResults.waiting_for_record_book_number)
+    await callback.answer()
+
 @dp.callback_query(F.data == "refresh_results")
 async def refresh_session_results(callback: CallbackQuery):
     record_book_number = await get_record_book_number(callback.from_user.id)

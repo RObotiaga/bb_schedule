@@ -58,6 +58,7 @@ class UsurtScraper:
 
                 results = []
                 current_semester = "Неизвестный семестр"
+                current_year = ""
                 
                 # Keywords to identify a grade cell
                 grade_keywords = [
@@ -80,11 +81,24 @@ class UsurtScraper:
                     # Filter empty strings from cell_texts for logic checks
                     non_empty_cells = [c for c in cell_texts if c]
                     
-                    # --- 1. Semester Header Detection ---
+                    # --- 1. Semester/Year Header Detection ---
                     if len(non_empty_cells) == 1:
                         text = non_empty_cells[0]
+                        
+                        # Detect Year (e.g., 2022/2023)
+                        if re.match(r'^\d{4}/\d{4}$', text):
+                            current_year = text
+                            continue
+                            
+                        # Detect Semester (digits '1', '2' or '... семестр')
                         if "семестр" in text.lower() or text.isdigit():
-                            current_semester = f"{text} семестр" if text.isdigit() else text
+                            sem_label = f"{text} семестр" if text.isdigit() else text
+                            
+                            # Append Year to make it unique and informative
+                            if current_year:
+                                current_semester = f"{sem_label} ({current_year})"
+                            else:
+                                current_semester = sem_label
                             continue
 
                     # --- 2. Data Row Parsing ---
