@@ -51,23 +51,54 @@ def parse_date_from_cell(cell_content, year):
 def parse_lesson_cell(cell_content):
     # ... (логика парсинга пары)
     if not isinstance(cell_content, str) or cell_content.strip() == "": return None
-    lines = [re.sub(r'^-', '', line).strip() for line in cell_content.split('\n') if line.strip()]
+    # FIX: Robustly remove leading hyphens and whitespace
+    lines = [re.sub(r'^\s*-\s*', '', line).strip() for line in cell_content.split('\n') if line.strip()]
     if not lines: return None
         
     subject = lines[0]
     teacher = "Не указан"
-    location = "Не указана"
+    location_parts = []
     
     # Поиск преподавателя и аудитории
+    # Начинаем поиск со второй строки (индекс 1)
     if len(lines) > 1:
-        # Пытаемся найти преподавателя, который часто идет второй строкой
-        if lines[1].istitle() or re.match(r'[А-ЯЁ]\.\s*[А-ЯЁ]\.\s*[А-ЯЁ][а-яё]+', lines[1]):
-            teacher = lines[1]
-            if len(lines) > 2:
-                location = " ".join(lines[2:])
+        teacher_found = False
+        for i in range(1, len(lines)):
+            line = lines[i]
+            
+            # Пропускаем "Не указан" если мы еще не нашли преподавателя
+            if not teacher_found and line.lower() == "не указан":
+                continue
+            
+            # Если преподаватель еще не найден, проверяем текущую строку
+            if not teacher_found:
+                # Heuristics for teacher detection:
+                # 1. Contains academic rank keywords
+                is_academic = any(keyword in line.lower() for keyword in ["преподаватель", "доцент", "профессор", "ассистент", "зав. кафедрой"])
+                
+                # 2. Looks like a name: "Surname I.O." or "Surname First Middle"
+                # Matches: "Ivanov I.I.", "Ivanov I. I.", "Ivanov Ivan Ivanovich"
+                is_name_format = re.match(r'^[А-ЯЁ][а-яё\-]+\s+([А-ЯЁ]\.\s*[А-ЯЁ]\.|[А-ЯЁ][а-яё]+\s+[А-ЯЁ][а-яё]+)', line)
+                
+                # 3. Old regex (reversed?): I.O. Surname (kept just in case, though rare in RU schedules usually)
+                is_name_initials_first = re.match(r'^[А-ЯЁ]\.\s*[А-ЯЁ]\.\s*[А-ЯЁ][а-яё]+', line)
+
+                if is_academic or is_name_format or is_name_initials_first or (line.istitle() and len(line.split()) >= 2):
+                    teacher = line
+                    teacher_found = True
+                else:
+                    # Если строка не похожа на преподавателя, это часть локации/другое
+                    location_parts.append(line)
+            else:
+                # Если преподаватель уже найден, все остальное - локация
+                location_parts.append(line)
+                
+        if location_parts:
+            location = " ".join(location_parts)
         else:
-            # Если вторая строка не похожа на ФИО, считаем ее аудиторией
-            location = " ".join(lines[1:])
+            location = "Не указана"
+    else:
+        location = "Не указана"
             
     # Добавление информации о подгруппе
     subgroup_info = ""
