@@ -3,16 +3,19 @@ import pandas as pd
 import os
 import sqlite3
 import re
-import logging # <-- Добавлен импорт
+import logging
 from datetime import datetime
 import sys
 from decouple import config
 
 # --- КОНФИГУРАЦИЯ (УНИФИКАЦИЯ ПУТЕЙ) ---
-# Используем пути из config.py для согласованности
 from config import DB_PATH, DOWNLOAD_DIR
+# Используем централизованную настройку логгирования
+from utils import setup_logging
+
 SCHEDULES_DIR = DOWNLOAD_DIR
 # -------------------------------------------------------------
+setup_logging()
 CURRENT_YEAR = datetime.now().year
 
 # --- ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ (без изменений) ---
@@ -25,23 +28,81 @@ def determine_week_type(filename):
     filename_lower = filename.lower()
     if 'нечетная' in filename_lower or 'нечет' in filename_lower: return 'нечетная'
     if 'четная' in filename_lower or 'чет' in filename_lower: return 'четная'
+    if 'аттестация' in filename_lower or 'сессия' in filename_lower: return 'сессия'
     return 'неизвестно'
 
-def parse_date_from_cell(cell_content, year):
-    # ... (логика парсинга даты)
+def parse_filename_context(filename):
+    """
+    Extracts (semester, start_year, end_year) from filename if present.
+    Example: "Промежуточная аттестация за 1 семестр 2025-2026 уч.год_..."
+    Returns: (semester: int, start_year: int, end_year: int) or None
+    """
+    match = re.search(r'(\d)\s*семестр.*?(\d{4})[/-](\d{4})', filename, re.IGNORECASE)
+    if match:
+        return int(match.group(1)), int(match.group(2)), int(match.group(3))
+    return None
+
+def parse_date_from_cell(cell_content, context):
+    """
+    Parses date from cell content.
+    context: dict with optional keys 'semester', 'start_year', 'end_year'
+             OR simple 'year' (int) for backward compatibility
+    """
     if not isinstance(cell_content, str): return None
+    
+    # 1. Попытка парсинга формата "16.01.2026" или "16.01.26"
+    # Сначала ищем этот формат, т.к. он более строгий.
+    date_match = re.search(r'(\d{1,2})\.(\d{1,2})\.(\d{2,4})', cell_content)
+    if date_match:
+        try:
+            day = int(date_match.group(1))
+            month = int(date_match.group(2))
+            year_str = date_match.group(3)
+            year = int(year_str)
+            if len(year_str) == 2:
+                year += 2000 # Предполагаем 21 век
+            
+            return datetime(year, month, day).strftime('%Y-%m-%d')
+        except ValueError:
+            pass # Если дата некорректная (напр. 32.01), пробуем дальше
+            
+    # 2. Попытка парсинга текстового формата "16 января"
     match = re.search(r'(\d+)\s+([а-я]+)', cell_content, re.IGNORECASE)
     if match:
         day = int(match.group(1))
         month_str = match.group(2).lower()
         month = MONTHS_MAP.get(month_str)
         if month:
-            # Обработка возможного переноса года (например, декабрь прошлого года)
-            current_date = datetime.now()
-            target_year = year
-            if month > current_date.month and current_date.month < 3: # Если сейчас начало года, а месяц декабрь/ноябрь
-                 target_year = year - 1
+            target_year = context.get('year', datetime.now().year)
             
+            # Если есть контекст семестра и учебного года - используем его
+            if 'semester' in context:
+                semester = context['semester']
+                start_year = context['start_year']
+                end_year = context['end_year']
+                
+                if semester == 1:
+                    # 1 семестр: сентябрь-декабрь -> начало года, январь-февраль -> конец года
+                    if month >= 9:
+                        target_year = start_year
+                    else:
+                        target_year = end_year
+                elif semester == 2:
+                    # 2 семестр: всегда вторая часть учебного года (весна)
+                    target_year = end_year
+            
+            else:
+                 # Старая логика (heuristic)
+                current_date = datetime.now()
+                # Если месяц > текущего (прошлое) и сейчас начало года (янв/фев), 
+                # то это скорее всего прошлый год (декабрь). 
+                # НО: Это работает плохо для расписаний на будущее.
+                # Лучше полагаться на то, что расписание обычно актуальное.
+                if month > 9 and current_date.month < 5:
+                    target_year = current_date.year - 1
+                else:
+                    target_year = current_date.year
+
             try:
                 return datetime(target_year, month, day).strftime('%Y-%m-%d')
             except ValueError:
@@ -132,21 +193,115 @@ def create_db_tables(conn):
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_teacher_date ON schedule (teacher, lesson_date)")
     conn.commit()
 
+def process_single_file(file_path, faculty="Неизвестно", course="N/A"):
+    """
+    Обрабатывает один файл расписания и возвращает список уроков.
+    """
+    lessons_list = []
+    filename = os.path.basename(file_path)
+    
+    if not filename.endswith((".xls", ".xlsx")):
+        return []
+    
+    week_type = determine_week_type(filename)
+    if week_type == 'неизвестно':
+        logging.warning(f"      ПРЕДУПРЕЖДЕНИЕ: Не удалось определить тип недели для файла {filename}. Пропуск.")
+        return []
+    
+    # Попытка извлечь контекст семестра/года из имени файла
+    file_context = {}
+    acad_context = parse_filename_context(filename)
+    if acad_context:
+        file_context['semester'] = acad_context[0]
+        file_context['start_year'] = acad_context[1]
+        file_context['end_year'] = acad_context[2]
+    else:
+        file_context['year'] = CURRENT_YEAR 
+    
+    try:
+        # Чтение с автоматическим определением первой строки заголовка
+        df = pd.read_excel(file_path, header=None)
+    except Exception as e:
+        logging.error(f"      Ошибка чтения файла {filename}: {e}. Пропуск.")
+        return []
+
+    # Поиск строки с заголовком 'День'
+    header_row_index = -1
+    
+    for i, row in df.iterrows():
+        row_str = [str(cell) for cell in row.tolist()]
+        
+        # Ищем стандартные заголовки
+        if 'День' in row_str:
+            header_row_index = i
+            break
+        # Или ищем альтернативные
+        if 'Day' in row_str and 'Time' in row_str:
+            header_row_index = i
+            break
+
+    if header_row_index == -1:
+        logging.warning(f"      Не найден заголовок таблицы ('День') в {filename}. Пропуск.")
+        return []
+
+    # Повторное чтение с правильным заголовком
+    df = pd.read_excel(file_path, header=header_row_index)
+    # Приведение имен столбцов к строковому формату
+    df.columns = [str(col).strip() for col in df.columns]
+
+    # Определяем фактические названия столбцов для Дня и Часов
+    day_col_name = 'День' if 'День' in df.columns else ('Day' if 'Day' in df.columns else None)
+    time_col_name = 'Часы' if 'Часы' in df.columns else ('Time' if 'Time' in df.columns else None)
+
+    if not day_col_name or not time_col_name:
+         logging.warning(f"      Не найдены ключевые столбцы ('День'/'Часы') в {filename}. Пропуск.")
+         return []
+
+    # Определяем столбцы, которые являются группами
+    groups = [col for col in df.columns if col not in [day_col_name, time_col_name, 'nan', 'Unnamed: 0']]
+    current_date_str = None
+    current_time_slot = None
+    
+    for index, row in df.iterrows():
+        # FIX: передаем file_context вместо простого year
+        potential_date = parse_date_from_cell(str(row.get(day_col_name)), file_context)
+        if potential_date:
+            current_date_str = potential_date
+            # Сброс времени при нахождении новой даты, чтобы не переносить время с предыдущего дня
+            current_time_slot = None
+            
+        if not current_date_str: continue
+            
+        raw_time = str(row.get(time_col_name, '')).strip()
+        # Проверяем, есть ли валидное время
+        if raw_time and "nan" not in raw_time.lower():
+             time_slot = raw_time
+             current_time_slot = time_slot
+        elif current_time_slot:
+             # Если время не указано, но есть сохраненное (объединенные ячейки)
+             time_slot = current_time_slot
+        else:
+             # Нет ни текущего, ни сохраненного времени
+             continue
+            
+        for group in groups:
+            lesson_info = parse_lesson_cell(row.get(group))
+            if lesson_info:
+                # Структура: group_name, lesson_date, time, subject, teacher, location, week_type, faculty, course
+                lessons_list.append((
+                    str(group).strip(), current_date_str, time_slot,
+                    lesson_info['subject'], lesson_info['teacher'], lesson_info['location'],
+                    week_type, faculty, course
+                ))
+    return lessons_list
+
 # --- ОСНОВНАЯ ЛОГИКА ---
 def main():
     if not os.path.exists(SCHEDULES_DIR):
         print(f"Ошибка: Директория для поиска расписаний '{SCHEDULES_DIR}' не найдена. Возможно, скрапинг не был запущен или завершился ошибкой.")
         sys.exit(1)
         
-    # 1. Удаляем старую БД (для гарантии свежести) - ЗАКОММЕНТИРОВАНО, ЧТОБЫ НЕ ТЕРЯТЬ ДАННЫЕ ПОЛЬЗОВАТЕЛЕЙ
-    # if os.path.exists(DB_PATH):
-    #     print(f"Удаление старой базы данных '{os.path.basename(DB_PATH)}'...")
-    #     os.remove(DB_PATH)
-        
     conn = sqlite3.connect(DB_PATH)
-    
-    # 2. !!! КРИТИЧЕСКОЕ ИЗМЕНЕНИЕ: Создаем структуру таблиц !!!
-    # Таблицы должны быть созданы, прежде чем мы попытаемся в них что-то писать/удалять.
     create_db_tables(conn)
 
     # 3. Парсинг файлов (БЕЗ удаления данных из БД пока)
@@ -167,79 +322,14 @@ def main():
         logging.info(f"\n--- Обработка папки: {faculty} / {course_str} ---")
 
         for filename in filenames:
-            if not filename.endswith((".xls", ".xlsx")):
-                continue
-            
             file_path = os.path.join(dirpath, filename)
             logging.info(f"    - Файл: {os.path.basename(file_path)}")
-            week_type = determine_week_type(filename)
-            if week_type == 'неизвестно':
-                logging.warning(f"      ПРЕДУПРЕЖДЕНИЕ: Не удалось определить тип недели для файла. Пропуск.")
-                continue
             
-            try:
-                # Чтение с автоматическим определением первой строки заголовка
-                df = pd.read_excel(file_path, header=None)
-            except Exception as e:
-                logging.error(f"      Ошибка чтения файла: {e}. Пропуск.")
-                continue
-
-            # Поиск строки с заголовком 'День'
-            header_row_index = -1
+            lessons = process_single_file(file_path, faculty, course)
+            all_lessons_to_insert.extend(lessons)
             
-            for i, row in df.iterrows():
-                row_str = [str(cell) for cell in row.tolist()]
-                
-                # Ищем стандартные заголовки
-                if 'День' in row_str:
-                    header_row_index = i
-                    break
-                # Или ищем альтернативные
-                if 'Day' in row_str and 'Time' in row_str:
-                    header_row_index = i
-                    break
-
-            if header_row_index == -1:
-                logging.warning("      Не найден заголовок таблицы ('День'). Пропуск.")
-                continue
-
-            # Повторное чтение с правильным заголовком
-            df = pd.read_excel(file_path, header=header_row_index)
-            # Приведение имен столбцов к строковому формату
-            df.columns = [str(col).strip() for col in df.columns]
-
-            # Определяем фактические названия столбцов для Дня и Часов
-            day_col_name = 'День' if 'День' in df.columns else ('Day' if 'Day' in df.columns else None)
-            time_col_name = 'Часы' if 'Часы' in df.columns else ('Time' if 'Time' in df.columns else None)
-
-            if not day_col_name or not time_col_name:
-                 logging.warning("      Не найдены ключевые столбцы ('День'/'Часы'). Пропуск.")
-                 continue
-
-            # Определяем столбцы, которые являются группами
-            groups = [col for col in df.columns if col not in [day_col_name, time_col_name, 'nan', 'Unnamed: 0']]
-            current_date_str = None
-            
-            for index, row in df.iterrows():
-                potential_date = parse_date_from_cell(str(row.get(day_col_name)), CURRENT_YEAR)
-                if potential_date:
-                    current_date_str = potential_date
-                    
-                if not current_date_str: continue
-                    
-                time_slot = str(row.get(time_col_name, '')).strip()
-                if not time_slot or "nan" in time_slot:
-                    continue
-                    
-                for group in groups:
-                    lesson_info = parse_lesson_cell(row.get(group))
-                    if lesson_info:
-                        # Структура: group_name, lesson_date, time, subject, teacher, location, week_type, faculty, course
-                        all_lessons_to_insert.append((
-                            str(group).strip(), current_date_str, time_slot,
-                            lesson_info['subject'], lesson_info['teacher'], lesson_info['location'],
-                            week_type, faculty, course
-                        ))
+            if lessons:
+                 logging.info(f"      Найдено занятий: {len(lessons)}")
 
     # 4. Проверка результатов и обновление БД
     if not all_lessons_to_insert:

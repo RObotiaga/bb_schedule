@@ -13,6 +13,7 @@ htmlcov/
 # Other
 __pycache__/
 *.pyc
+*.db
 
 # Игнорируем логи и временные данные
 fatal_error_screenshot.png

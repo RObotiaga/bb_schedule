@@ -5,9 +5,11 @@ import re
 import sys
 import logging
 import shutil
+from datetime import datetime
 from urllib.parse import urljoin, unquote
 from playwright.async_api import async_playwright, TimeoutError as PlaywrightTimeout
 from decouple import config
+from utils import setup_logging
 
 # --- КОНФИГУРАЦИЯ ---
 LOGIN = config("BB_LOGIN", default=None)
@@ -92,56 +94,104 @@ async def get_faculty_folder_links(page):
     
     return list(dict.fromkeys(folder_links))
 
-async def download_xls_files(page, faculty_name: str):
-    """Скачивает файлы, раскладывая их по папкам 'Факультет/Курс'."""
-    # Ищем файлы, используя более общий селектор (вдруг они тоже не в li.title)
+async def download_xls_files(page, faculty_name: str, week_name_prefix: str = ""):
+    """
+    Скачивает все xls/xlsx файлы со страницы.
+    """
+    # Обычно мы уже внутри папки курса. Но если файлы прямо в факультете?
+    # Или если мы в "Общем"?
+    # Попробуем определить курс из хлебных крошек или текущего URL, или просто свалим в кучу.
+    
+    current_url = page.url
+    # Если "Общее" - значит мы в корне сессии/недели.
+    if faculty_name == "Общее":
+        save_dir = os.path.join(DOWNLOAD_DIR, faculty_name)
+    else:
+        # Стандартная структура папок факультета
+        save_dir = os.path.join(DOWNLOAD_DIR, faculty_name)
+        if not os.path.exists(save_dir):
+            os.makedirs(save_dir, exist_ok=True)
+            
+    if not os.path.exists(save_dir):
+        os.makedirs(save_dir, exist_ok=True)
+    
+    # ВОЗВРАЩАЕМСЯ К СУТИ:
+    # Если мы нашли файлы в КОРНЕ (где нет факультетов), мы их качаем.
+    # Сохраним их в папку: data/schedules/DirectDownloads/{filename}
+    # Чтобы process_schedules их нашел.
+    
+    save_dir = os.path.join(DOWNLOAD_DIR, faculty_name)
+    if not os.path.exists(save_dir):
+        os.makedirs(save_dir, exist_ok=True)
+
+    # Ищем файлы
     file_selector = 'a[href$=".xls"], a[href$=".xlsx"]'
     try:
-        # Ждем файлы в течение 10 секунд
-        await page.locator(file_selector).first.wait_for(timeout=10000)
+        # Ждем файлы в течение 2 секунд (быстрый скип пустых папок)
+        await page.locator(file_selector).first.wait_for(timeout=2000)
     except PlaywrightTimeout:
         logging.info("  Файлы для скачивания не найдены.")
         return 0
 
-    links = await page.locator(file_selector).all()
-    logging.info(f"  Найдено файлов для скачивания: {len(links)}")
+    # Получаем элементы
+    files = await page.locator(file_selector).all()
     count = 0
-    for el in links:
+    
+    for file_link in files:
+        url = await file_link.get_attribute('href')
+        if not url: continue
+            
+        full_url = url if url.startswith('http') else urljoin(page.url, url)
+        
+        # Скачивание
         try:
             async with page.expect_download() as download_info:
-                await el.click(timeout=15000)
+                # Используем JS клик для надежности
+                await file_link.evaluate("node => node.click()")
             
             download = await download_info.value
-            filename = download.suggested_filename
-
-            course_match = re.search(r'(\d)\s*курс', filename, re.IGNORECASE)
-            if course_match:
-                course_folder = f"{course_match.group(1)} курс"
+            
+            # Имя файла
+            original_filename = download.suggested_filename
+            
+            # ! ДОБАВЛЕНИЕ ПРЕФИКСА !
+            if week_name_prefix:
+                # Очистка префикса от недопустимых символов
+                safe_prefix = re.sub(r'[\\/*?:"<>|]', '_', week_name_prefix).strip()
+                final_filename = f"{safe_prefix}_{original_filename}"
             else:
-                course_folder = "Без курса"
-
-            target_dir = os.path.join(DOWNLOAD_DIR, faculty_name, course_folder)
-            os.makedirs(target_dir, exist_ok=True)
+                final_filename = original_filename
+                
+            save_path = os.path.join(save_dir, final_filename)
             
-            save_path = os.path.join(target_dir, filename)
             await download.save_as(save_path)
-            
-            logging.info(f"    - Скачан в: {os.path.relpath(save_path)}")
+            logging.info(f"    - Скачан в: {save_path}")
             count += 1
-        except PlaywrightTimeout as e:
-            logging.error(f"    - Не удалось скачать файл (таймаут). Ошибка: {e}")
-            continue
+            
         except Exception as e:
-            logging.error(f"    - Не удалось скачать файл. Неизвестная ошибка: {type(e).__name__}: {e}")
-            continue
+            logging.error(f"Ошибка при скачивании {url}: {e}")
+            
     return count
 
-async def process_faculty_folders(page):
+async def process_faculty_folders(page, week_name: str):
     faculty_list_url = page.url
     folder_links = await get_faculty_folder_links(page)
     logging.info(f'Найдено папок факультетов: {len(folder_links)}')
     
     if not folder_links:
+        logging.warning("Не найдено ни одной папки факультетов на странице.")
+        
+        # ЭВРИСТИКА: Возможно, файлы лежат прямо здесь (без папок факультетов)?
+        # Попробуем найти файлы прямо в текущей папке.
+        logging.info("Попытка найти файлы прямо в текущей папке (без подпапок)...")
+
+        # Передаем "Общее" как имя факультета.
+        files_found = await download_xls_files(page, "Общее", week_name_prefix=week_name)
+        if files_found > 0:
+            logging.info(f"Найдено и скачано {files_found} файлов в корневой папке недели.")
+            return
+
+        logging.info("Файлы и папки не найдены. Пропуск.")
         return
 
     for i, folder_href in enumerate(folder_links, 1):
@@ -168,7 +218,7 @@ async def process_faculty_folders(page):
 
         logging.info(f'\nОбрабатываем папку {i}/{len(folder_links)}: "{decoded_folder_name}"...')
         
-        count = await download_xls_files(page, decoded_folder_name)
+        count = await download_xls_files(page, decoded_folder_name, week_name)
         logging.info(f'  Скачано файлов из папки: {count}')
         
         if i < len(folder_links):
@@ -176,6 +226,56 @@ async def process_faculty_folders(page):
             # Принудительный возврат к списку факультетов
             await page.goto(faculty_list_url)
             await page.wait_for_load_state("networkidle")
+
+async def is_session_relevant(week_name: str) -> bool:
+    """
+    Проверяет, является ли сессия актуальной для текущей даты.
+    Логика:
+    - Сентябрь (9) - Январь (1): Актуальна сессия за 1 семестр.
+    - Февраль (2) - Июль (7): Актуальна сессия за 2 семестр.
+    """
+    # Если это не сессия, то она актуальна (обычные недели)
+    if 'аттестация' not in week_name.lower() and 'сессия' not in week_name.lower():
+        return True
+
+    now = datetime.now()
+    month = now.month
+    year = now.year
+
+    # Определяем ожидаемый семестр
+    # 1 семестр: примерно с сентября по январь/февраль
+    if 9 <= month <= 12 or month == 1:
+        target_semester = 1
+        # Учебный год:
+        # Если сейчас сент-дек 2025 -> 2025-2026
+        # Если сейчас янв 2026 -> 2025-2026
+        if month == 1:
+            start_year = year - 1
+        else:
+            start_year = year
+    # 2 семестр: февраль - июль/август
+    else:
+        target_semester = 2
+        start_year = year - 1 if month < 9 else year # (обычно весна это тот же учебный год, что начался в прошлом)
+        # Если сейчас фев-июль 2026 -> учебный год начался в 2025 -> 2025-2026
+
+    # Парсим имя (ожидаем формат "...1 семестр 2025-2026...")
+    match = re.search(r'(\d)\s*семестр.*?(\d{4})[/-](\d{4})', week_name, re.IGNORECASE)
+    if match:
+        sem = int(match.group(1))
+        y_start = int(match.group(2))
+        
+        # Строгая проверка: семестр должен совпадать, и год начала тоже.
+        if sem == target_semester and y_start == start_year:
+            return True
+            
+        logging.info(f"Пропуск неактуальной сессии: {week_name} (Ожидалось: {target_semester} сем. {start_year}-{start_year+1})")
+        return False
+    
+    # Если не удалось распарсить год/семестр, но это сессия - по умолчанию пропускаем, чтобы не качать мусор,
+    # ИЛИ (безопаснее) качаем, если не уверены.
+    # Решим: качаем только если уверены, что актуально.
+    return False
 
 async def get_week_folder_links(page):
     """Динамически ищет папки недель на странице."""
@@ -200,8 +300,26 @@ async def get_week_folder_links(page):
     for item in items:
         href = item['href']
         name = item['text']
-        if href and name and ('неделя' in name.lower() or 'четная' in name.lower() or 'нечет' in name.lower()):
-            week_links[name] = href
+        if href and name:
+            name_lower = name.lower()
+            if ('неделя' in name_lower or 
+                'четная' in name_lower or 
+                'нечет' in name_lower or 
+                'промежуточная аттестация' in name_lower or
+                'сессия' in name_lower):
+                
+                # Фильтрация сессий
+                is_relevant = await is_session_relevant(name)
+                if is_relevant:
+                    week_links[name] = href
+                    logging.info(f"  [+] Добавлена ссылка: {name}")
+                else:
+                    if 'аттестация' in name_lower or 'сессия' in name_lower:
+                        logging.info(f"  [-] Пропущена сессия: {name}")
+            else:
+                 # Логируем, что мы видим, но игнорируем (для отладки)
+                 # logging.debug(f"  [.] Игнорируем ссылку: {name}")
+                 pass
             
     return week_links
 
@@ -210,7 +328,7 @@ async def main():
     browser_args = ['--no-sandbox', '--disable-setuid-sandbox']
     
     async with async_playwright() as p:
-        browser = await p.chromium.launch(headless=True, args=browser_args)
+        browser = await p.chromium.launch(headless=False, args=browser_args)
         context = await browser.new_context(accept_downloads=True)
         page = await context.new_page() 
         try:
@@ -240,7 +358,7 @@ async def main():
                 await navigate_to_week_folder(page, week_name)
                 
                 # После перехода в папку Недели, запускаем обработку факультетов
-                await process_faculty_folders(page)
+                await process_faculty_folders(page, week_name)
                 
             logging.info(f"\n{'='*20} ВСЕ НЕДЕЛИ УСПЕШНО ОБРАБОТАНЫ {'='*20}")
 
@@ -252,7 +370,7 @@ async def main():
             await browser.close()
 
 if __name__ == "__main__":
-    logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+    setup_logging()
     if os.path.exists(os.path.join(os.getcwd(), '..')):
         sys.path.insert(0, os.path.abspath(os.path.join(os.getcwd(), '..')))
         
