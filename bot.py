@@ -202,7 +202,10 @@ def format_schedule_message(group: str, target_date: date, lessons: List[sqlite3
         return f"{header}\n❌Расписание отсутствует❌"
         
     week_type = lessons[0]['week_type'].capitalize()
-    header = f"*{week_type} неделя*\n*{group}*\n\n*{date_str}*"
+    if 'сессия' in week_type.lower():
+        header = f"*{week_type}*\n*{group}*\n\n*{date_str}*"
+    else:
+        header = f"*{week_type} неделя*\n*{group}*\n\n*{date_str}*"
     # Note: access fields by key ['time']
     lesson_parts = [f"⏰ {lesson['time']}\n-  `{lesson['subject']}`\n-  `{lesson['teacher']}`\n-  `{lesson['location']}`" for lesson in lessons]
     return f"{header}\n\n" + "\n\n".join(lesson_parts)
