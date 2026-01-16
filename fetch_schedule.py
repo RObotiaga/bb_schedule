@@ -328,7 +328,7 @@ async def main():
     browser_args = ['--no-sandbox', '--disable-setuid-sandbox']
     
     async with async_playwright() as p:
-        browser = await p.chromium.launch(headless=False, args=browser_args)
+        browser = await p.chromium.launch(headless=True, args=browser_args)
         context = await browser.new_context(accept_downloads=True)
         page = await context.new_page() 
         try:
