@@ -1,9 +1,7 @@
-version: '3.8'
-
 services:
   schedule_bot:
     build: .
-    
+
     # Настройка перезапуска
     restart: always
 
@@ -19,3 +17,15 @@ services:
     # Создание тома
     volumes:
       - ./data:/app/data
+
+  schedule_web:
+    build: .
+    command: uvicorn web_app:app --host 0.0.0.0 --port 8000
+    restart: always
+    ports:
+      - "127.0.0.1:8000:8000"
+    volumes:
+      - ./data:/app/data
+    environment:
+      - BB_LOGIN=${BB_LOGIN}
+      - BB_PASSWORD=${BB_PASSWORD}

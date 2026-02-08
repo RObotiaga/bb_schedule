@@ -1,0 +1,56 @@
+{% extends "base.html" %}
+
+{% block title %}Расписание {{ group }}{% endblock %}
+
+{% block content %}
+<div class="row mb-3">
+    <div class="col">
+        <a href="/" class="btn btn-outline-secondary">&larr; Вернуться к выбору</a>
+    </div>
+</div>
+
+<h2 class="mb-4 text-center">Расписание группы <span class="text-primary">{{ group }}</span></h2>
+
+{% if not schedule or schedule|length == 0 %}
+<div class="alert alert-warning text-center">
+    Расписание не найдено или список пуст.
+</div>
+{% else %}
+
+<div class="row">
+    {% for day in schedule %}
+    <div class="col-12 mb-4">
+        <div class="card">
+            <div class="card-header bg-light d-flex justify-content-between align-items-center">
+                <h5 class="mb-0">{{ day.date }}</h5>
+                {% if day.week_type %}
+                <span class="badge bg-secondary">{{ day.week_type }}</span>
+                {% endif %}
+            </div>
+            <ul class="list-group list-group-flush">
+                {% for lesson in day.lessons %}
+                <li class="list-group-item">
+                    <div class="row">
+                        <div class="col-md-2 lesson-time">
+                            {{ lesson.time }}
+                        </div>
+                        <div class="col-md-6">
+                            <strong>{{ lesson.subject }}</strong>
+                            {% if lesson.teacher and lesson.teacher != 'Не указан' %}
+                            <br><small class="text-muted">🧑‍🏫 {{ lesson.teacher }}</small>
+                            {% endif %}
+                        </div>
+                        <div class="col-md-4 text-md-end text-muted">
+                            📍 {{ lesson.location }}
+                        </div>
+                    </div>
+                </li>
+                {% endfor %}
+            </ul>
+        </div>
+    </div>
+    {% endfor %}
+</div>
+
+{% endif %}
+{% endblock %}

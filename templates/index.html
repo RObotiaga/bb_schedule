@@ -1,0 +1,126 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="row justify-content-center">
+    <div class="col-md-8">
+        <div class="card p-4">
+            <h2 class="text-center mb-4">Выберите группу</h2>
+            
+            {% if error %}
+            <div class="alert alert-danger" role="alert">
+                {{ error }}
+            </div>
+            {% endif %}
+
+            <form action="/schedule" method="get">
+                <div class="mb-3">
+                    <label for="facultySelect" class="form-label">Факультет</label>
+                    <select class="form-select" id="facultySelect" required>
+                        <option value="" selected disabled>Выберите факультет...</option>
+                    </select>
+                </div>
+
+                <div class="mb-3">
+                    <label for="courseSelect" class="form-label">Курс</label>
+                    <select class="form-select" id="courseSelect" disabled required>
+                        <option value="" selected disabled>Сначала выберите факультет</option>
+                    </select>
+                </div>
+
+                <div class="mb-3">
+                    <label for="groupSelect" class="form-label">Группа</label>
+                    <select class="form-select" id="groupSelect" name="group" disabled required>
+                        <option value="" selected disabled>Сначала выберите курс</option>
+                    </select>
+                </div>
+
+                <div class="d-grid gap-2">
+                    <button type="submit" class="btn btn-primary btn-lg" id="submitBtn" disabled>Показать расписание</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    document.addEventListener('DOMContentLoaded', async () => {
+        const facultySelect = document.getElementById('facultySelect');
+        const courseSelect = document.getElementById('courseSelect');
+        const groupSelect = document.getElementById('groupSelect');
+        const submitBtn = document.getElementById('submitBtn');
+
+        // Загрузка факультетов
+        try {
+            const response = await fetch('/api/faculties');
+            const faculties = await response.json();
+            faculties.forEach(faculty => {
+                const option = document.createElement('option');
+                option.value = faculty;
+                option.textContent = faculty;
+                facultySelect.appendChild(option);
+            });
+        } catch (error) {
+            console.error('Ошибка загрузки факультетов:', error);
+        }
+
+        // Обработка выбора факультета
+        facultySelect.addEventListener('change', async () => {
+            courseSelect.innerHTML = '<option value="" selected disabled>Выберите курс...</option>';
+            courseSelect.disabled = true;
+            groupSelect.innerHTML = '<option value="" selected disabled>Сначала выберите курс</option>';
+            groupSelect.disabled = true;
+            submitBtn.disabled = true;
+
+            const faculty = facultySelect.value;
+            if (faculty) {
+                try {
+                    const response = await fetch(`/api/courses/${encodeURIComponent(faculty)}`);
+                    const courses = await response.json();
+                    courses.forEach(course => {
+                        const option = document.createElement('option');
+                        option.value = course;
+                        option.textContent = course;
+                        courseSelect.appendChild(option);
+                    });
+                    courseSelect.disabled = false;
+                } catch (error) {
+                    console.error('Ошибка загрузки курсов:', error);
+                }
+            }
+        });
+
+        // Обработка выбора курса
+        courseSelect.addEventListener('change', async () => {
+            groupSelect.innerHTML = '<option value="" selected disabled>Выберите группу...</option>';
+            groupSelect.disabled = true;
+            submitBtn.disabled = true;
+
+            const faculty = facultySelect.value;
+            const course = courseSelect.value;
+            
+            if (faculty && course) {
+                try {
+                    const response = await fetch(`/api/groups/${encodeURIComponent(faculty)}/${encodeURIComponent(course)}`);
+                    const groups = await response.json();
+                    groups.forEach(group => {
+                        const option = document.createElement('option');
+                        option.value = group;
+                        option.textContent = group;
+                        groupSelect.appendChild(option);
+                    });
+                    groupSelect.disabled = false;
+                } catch (error) {
+                    console.error('Ошибка загрузки групп:', error);
+                }
+            }
+        });
+
+        // Обработка выбора группы
+        groupSelect.addEventListener('change', () => {
+            submitBtn.disabled = !groupSelect.value;
+        });
+    });
+</script>
+{% endblock %}
