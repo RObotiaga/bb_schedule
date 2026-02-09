@@ -72,11 +72,35 @@ async def get_groups(faculty: str, course: str):
     groups.sort()
     return groups
 
+@app.get("/api/resolve_user")
+async def resolve_user(user_id: int):
+    """
+    API для определения группы пользователя по его Telegram ID.
+    Используется frontend-ом (Telegram Web App) и для редиректов.
+    """
+    from database import get_user_group_db
+    group = await get_user_group_db(user_id)
+    if group:
+        return {"group": group}
+    return {"error": "User not found or group not set"}
+
 # --- Web Routes ---
 
 @app.get("/", response_class=HTMLResponse)
-async def read_root(request: Request):
-    """Главная страница с формой выбора."""
+async def read_root(request: Request, user_id: int = None):
+    """
+    Главная страница.
+    Если передан user_id (в query param), пытаемся определить группу и сделать редирект.
+    Также JS на странице будет пытаться определить пользователя через Telegram Web App.
+    """
+    if user_id:
+        from database import get_user_group_db
+        group = await get_user_group_db(user_id)
+        if group:
+             # Если группа найдена, редиректим на расписание
+             from fastapi.responses import RedirectResponse
+             return RedirectResponse(url=f"/schedule?group={group}")
+
     return templates.TemplateResponse("index.html", {"request": request})
 
 @app.get("/schedule", response_class=HTMLResponse)

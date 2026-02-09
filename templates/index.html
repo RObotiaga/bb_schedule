@@ -46,6 +46,34 @@
 {% block scripts %}
 <script>
     document.addEventListener('DOMContentLoaded', async () => {
+        // --- Telegram Web App Integration ---
+        const tg = window.Telegram.WebApp;
+        tg.expand(); // Расширяем на весь экран
+
+        // Пытаемся автоматически определить пользователя
+        if (tg.initDataUnsafe && tg.initDataUnsafe.user) {
+            const userId = tg.initDataUnsafe.user.id;
+            console.log("Telegram User ID found:", userId);
+
+            try {
+                // Спрашиваем у бекенда группу пользователя
+                const response = await fetch(`/api/resolve_user?user_id=${userId}`);
+                const data = await response.json();
+
+                if (data.group) {
+                    console.log("Group found:", data.group);
+                    // Перенаправляем на расписание
+                    window.location.replace(`/schedule?group=${encodeURIComponent(data.group)}`);
+                    return; // Прерываем выполнение, чтобы не грузить списки (хотя асинхронно они могут начать грузиться)
+                } else {
+                    console.log("Group not found for user.");
+                }
+            } catch (error) {
+                console.error("Error resolving user:", error);
+            }
+        }
+        // ------------------------------------
+
         const facultySelect = document.getElementById('facultySelect');
         const courseSelect = document.getElementById('courseSelect');
         const groupSelect = document.getElementById('groupSelect');
