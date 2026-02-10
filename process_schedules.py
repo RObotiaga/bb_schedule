@@ -318,6 +318,16 @@ def main():
         course_str = path_parts[1] if len(path_parts) > 1 else "Без курса"
         course_match = re.search(r'\d+', course_str)
         course = course_match.group(0) if course_match else "N/A"
+
+        # FIX: If course is N/A, try to find it in the filenames in this directory
+        if course == "N/A":
+            for filename in filenames:
+                # Look for "1 курс", "2 курс", etc. in filename
+                filename_match = re.search(r'(\d+)\s*курс', filename, re.IGNORECASE)
+                if filename_match:
+                    course = filename_match.group(1)
+                    logging.info(f"    Обнаружен курс {course} из имени файла {filename}")
+                    break
         
         logging.info(f"\n--- Обработка папки: {faculty} / {course_str} ---")
 
