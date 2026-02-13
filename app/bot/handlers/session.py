@@ -9,8 +9,9 @@ from app.core.database import (
 )
 from app.services.schedule_api import UsurtScraper
 from app.bot.keyboards import (
-    get_session_results_keyboard, get_settings_keyboard, SessionResults, NoteEdit, ChecklistAdd
+    get_session_results_keyboard, get_settings_keyboard
 )
+from app.bot.states import SessionResults, NoteEdit, ChecklistAdd
 
 router = Router()
 
