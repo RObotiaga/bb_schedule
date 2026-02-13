@@ -2,6 +2,9 @@ import logging
 import re
 from typing import List, Dict, Any
 from playwright.async_api import async_playwright
+from datetime import datetime, timedelta, timezone
+
+from app.core.database import get_cached_session_results, save_cached_session_results
 
 class UsurtScraper:
     BASE_URL = "http://report.usurt.ru/uspev.aspx"
@@ -13,13 +16,9 @@ class UsurtScraper:
         Returns: (status, data)
         Status: "SUCCESS", "NOT_FOUND", "ERROR"
         """
-        from database import get_cached_session_results, save_cached_session_results
-        from datetime import datetime, timedelta, timezone
-
         if use_cache:
             cached_data, last_updated_str = await get_cached_session_results(record_book_number)
-            if cached_data is not None: # Check if cache exists (even if empty list)
-                # Check TTL (1 hour)
+            if cached_data is not None:
                 try:
                     last_updated = datetime.fromisoformat(last_updated_str)
                     if last_updated.tzinfo is None:
@@ -60,7 +59,6 @@ class UsurtScraper:
                 current_semester = "Неизвестный семестр"
                 current_year = ""
                 
-                # Keywords to identify a grade cell
                 grade_keywords = [
                     "отлично", "хорошо", "удовлетворительно", "неудовлетворительно", 
                     "зачтено", "незачет", "недопуск", "не явился"
@@ -78,23 +76,19 @@ class UsurtScraper:
                     for j in range(cell_count):
                         cell_texts.append((await cells.nth(j).inner_text()).strip())
                     
-                    # Filter empty strings from cell_texts for logic checks
                     non_empty_cells = [c for c in cell_texts if c]
                     
                     # --- 1. Semester/Year Header Detection ---
                     if len(non_empty_cells) == 1:
                         text = non_empty_cells[0]
                         
-                        # Detect Year (e.g., 2022/2023)
                         if re.match(r'^\d{4}/\d{4}$', text):
                             current_year = text
                             continue
                             
-                        # Detect Semester (digits '1', '2' or '... семестр')
                         if "семестр" in text.lower() or text.isdigit():
                             sem_label = f"{text} семестр" if text.isdigit() else text
                             
-                            # Append Year to make it unique and informative
                             if current_year:
                                 current_semester = f"{sem_label} ({current_year})"
                             else:
@@ -168,10 +162,6 @@ class UsurtScraper:
                         'passed': passed
                     })
                 
-                # Save to cache even if empty (to avoid re-scraping empty results immediately if that's valid)
-                # But usually empty results means something is wrong or student has no grades.
-                # Let's save if we found something or if we are sure it's a valid empty state.
-                # For now, save if results exist.
                 if results:
                     await save_cached_session_results(record_book_number, results)
 

@@ -32,12 +32,16 @@ admin_keyboard = ReplyKeyboardMarkup(
 
 def get_faculties_keyboard(faculties_list: list):
     builder = InlineKeyboardBuilder()
-    [builder.button(text=name, callback_data=f"faculty:{i}") for i, name in enumerate(faculties_list)]
+    if not faculties_list:
+        logging.warning("faculties_list is empty in get_faculties_keyboard")
+        return builder.as_markup()
+        
+    for i, name in enumerate(faculties_list):
+        builder.button(text=name, callback_data=f"faculty:{i}")
     builder.adjust(2)
     return builder.as_markup()
 
 def get_courses_keyboard(faculty_id: int, faculties_list: list, structured_data: dict):
-    # Используем ID для получения имени факультета (строки)
     if faculty_id < 0 or faculty_id >= len(faculties_list):
         logging.error(f"Invalid faculty_id: {faculty_id}")
         return None
@@ -45,7 +49,13 @@ def get_courses_keyboard(faculty_id: int, faculties_list: list, structured_data:
     faculty = faculties_list[faculty_id] 
     
     builder = InlineKeyboardBuilder()
-    courses = sorted(structured_data.get(faculty, {}).keys(), key=lambda c: int(c) if c.isdigit() else 99)
+    # Ensure keys are strings, but sort numerically if possible
+    raw_courses = structured_data.get(faculty, {}).keys()
+    
+    def sort_key(c):
+        return int(c) if str(c).isdigit() else 99
+        
+    courses = sorted(raw_courses, key=sort_key)
     
     if not courses:
          logging.warning(f"Не найдены курсы для факультета: {faculty}")
@@ -71,7 +81,8 @@ def get_courses_keyboard(faculty_id: int, faculties_list: list, structured_data:
 def get_groups_keyboard(faculty: str, course: str, faculties_list: list, structured_data: dict):
     builder = InlineKeyboardBuilder()
     groups = sorted(structured_data.get(faculty, {}).get(course, []))
-    [builder.button(text=g, callback_data=f"group:{g}") for g in groups]
+    for g in groups:
+        builder.button(text=g, callback_data=f"group:{g}")
     builder.adjust(2)
     
     try:
@@ -87,7 +98,8 @@ def get_groups_keyboard(faculty: str, course: str, faculties_list: list, structu
 
 def get_teacher_choices_keyboard(teachers: list):
     builder = InlineKeyboardBuilder()
-    [builder.button(text=name, callback_data=f"teacher_select:{i}") for i, name in enumerate(teachers)]
+    for i, name in enumerate(teachers):
+        builder.button(text=name, callback_data=f"teacher_select:{i}")
     builder.adjust(1)
     return builder.as_markup()
 
@@ -114,12 +126,18 @@ def get_settings_keyboard(settings: dict):
     def btn(key, label):
         status = "✅" if s.get(key, False) else "❌"
         return InlineKeyboardButton(text=f"{label} {status}", callback_data=f"toggle_setting:{key}")
-
-    builder.row(btn("hide_5", "Скрыть 'Отлично' (5)"))
-    builder.row(btn("hide_4", "Скрыть 'Хорошо' (4)"))
-    builder.row(btn("hide_3", "Скрыть 'Удовл.' (3)"))
-    builder.row(btn("hide_passed_non_exam", "Скрыть 'Зачет'"))
-    builder.row(btn("hide_failed", "Скрыть 'Незачет/Недопуск'"))
+    
+    # Correct buttons construction
+    buttons = [
+        btn("hide_5", "Скрыть 'Отлично' (5)"),
+        btn("hide_4", "Скрыть 'Хорошо' (4)"),
+        btn("hide_3", "Скрыть 'Удовл.' (3)"),
+        btn("hide_passed_non_exam", "Скрыть 'Зачет'"),
+        btn("hide_failed", "Скрыть 'Незачет/Недопуск'")
+    ]
+    
+    for b in buttons:
+        builder.row(b)
     
     builder.row(InlineKeyboardButton(text="⬅️ Назад к результатам", callback_data="back_to_results"))
     return builder.as_markup()

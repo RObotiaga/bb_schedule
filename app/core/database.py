@@ -1,12 +1,10 @@
-# FILE: database.py (Refactored FIX)
+# FILE: app/core/database.py
 import aiosqlite
 import logging
 import json
 from typing import List, Dict, Any, Tuple
-from config import DB_PATH
+from app.core.config import DB_PATH
 import os
-
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 # --- Инициализация и подключение ---
 async def get_db_connection():
@@ -16,12 +14,10 @@ async def get_db_connection():
     """
     # Создаем директорию для БД, если ее нет (синхронно)
     os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
-    # КЛЮЧЕВОЕ ИЗМЕНЕНИЕ: Не используем await здесь!
     return aiosqlite.connect(DB_PATH)
 
 async def initialize_database():
     """Создает все необходимые таблицы, если они не существуют."""
-    # КОРРЕКТНОЕ ИСПОЛЬЗОВАНИЕ: async with ожидает результат get_db_connection()
     async with await get_db_connection() as db:
         # Устанавливаем режим возврата словарей (row_factory) для удобства
         db.row_factory = aiosqlite.Row 
@@ -35,14 +31,13 @@ async def initialize_database():
             )
         """)
         
-        # Миграция: добавляем колонку record_book_number, если её нет
+        # Миграции
         try:
             await db.execute("ALTER TABLE users ADD COLUMN record_book_number TEXT")
             await db.commit()
         except aiosqlite.OperationalError:
             pass
 
-        # Миграция: добавляем колонку settings, если её нет
         try:
             await db.execute("ALTER TABLE users ADD COLUMN settings TEXT")
             await db.commit()
@@ -98,7 +93,6 @@ async def initialize_database():
 # --- Загрузка структуры в память (Кэширование) ---
 async def load_structure_from_db() -> Tuple[Dict[str, Any], List[str], List[str]]:
     """Загружает структуру меню и список преподавателей из БД асинхронно."""
-    # КОРРЕКТНОЕ ИСПОЛЬЗОВАНИЕ
     async with await get_db_connection() as db:
         db.row_factory = aiosqlite.Row
 
@@ -129,7 +123,6 @@ async def load_structure_from_db() -> Tuple[Dict[str, Any], List[str], List[str]
 
 # --- Пользователи и Группы ---
 async def save_user_group_db(user_id: int, group_name: str | None):
-    # КОРРЕКТНОЕ ИСПОЛЬЗОВАНИЕ
     async with await get_db_connection() as db:
         await db.execute("""
             INSERT INTO users (user_id, group_name) VALUES (?, ?)
@@ -138,28 +131,15 @@ async def save_user_group_db(user_id: int, group_name: str | None):
         await db.commit()
 
 async def get_user_group_db(user_id: int) -> str | None:
-    # КОРРЕКТНОЕ ИСПОЛЬЗОВАНИЕ
     async with await get_db_connection() as db:
         async with db.execute("SELECT group_name FROM users WHERE user_id = ?", (user_id,)) as cursor:
             row = await cursor.fetchone()
-            # row[0] вместо row['group_name'] так как row_factory не применяется 
-            # по умолчанию для row_factory = aiosqlite.Row в aiosqlite.fetchone() 
-            # без явного установления на уровне курсора или коннекта
             return row[0] if row else None 
 
 async def save_record_book_number(user_id: int, number: str):
     async with await get_db_connection() as db:
-        # Используем UPDATE, так как пользователь уже должен существовать (создается при /start)
-        # Но на всякий случай используем INSERT OR IGNORE или проверку, 
-        # но логичнее предположить, что юзер уже есть.
-        # Однако, если юзера нет, надо бы его создать.
-        # Лучше использовать UPSERT логику, но у нас SQLite.
-        # INSERT OR REPLACE может затереть group_name, если мы не передадим его.
-        # Поэтому лучше сначала UPDATE.
-        
         cursor = await db.execute("UPDATE users SET record_book_number = ? WHERE user_id = ?", (number, user_id))
         if cursor.rowcount == 0:
-            # Если пользователя нет, создаем
             await db.execute("INSERT INTO users (user_id, record_book_number) VALUES (?, ?)", (user_id, number))
         await db.commit()
 
@@ -186,7 +166,6 @@ async def get_user_settings(user_id: int) -> dict:
             return {} 
 
 async def get_all_user_ids() -> List[int]:
-    # КОРРЕКТНОЕ ИСПОЛЬЗОВАНИЕ
     async with await get_db_connection() as db:
         async with db.execute("SELECT user_id FROM users") as cursor:
             rows = await cursor.fetchall()
@@ -201,9 +180,8 @@ async def get_all_courses() -> List[str]:
 
 # --- Расписание ---
 async def get_schedule_by_group(group: str, date_str: str):
-    # КОРРЕКТНОЕ ИСПОЛЬЗОВАНИЕ
     async with await get_db_connection() as db:
-        db.row_factory = aiosqlite.Row # Устанавливаем явно
+        db.row_factory = aiosqlite.Row 
         async with db.execute(
             "SELECT * FROM schedule WHERE group_name = ? AND lesson_date = ? ORDER BY time", 
             (group, date_str)
@@ -211,9 +189,8 @@ async def get_schedule_by_group(group: str, date_str: str):
             return await cursor.fetchall()
 
 async def get_schedule_by_teacher(teacher_name: str, date_str: str):
-    # КОРРЕКТНОЕ ИСПОЛЬЗОВАНИЕ
     async with await get_db_connection() as db:
-        db.row_factory = aiosqlite.Row # Устанавливаем явно
+        db.row_factory = aiosqlite.Row 
         async with db.execute(
             "SELECT * FROM schedule WHERE teacher = ? AND lesson_date = ? ORDER BY time", 
             (teacher_name, date_str)
@@ -222,21 +199,17 @@ async def get_schedule_by_teacher(teacher_name: str, date_str: str):
 
 # --- Логирование рассылок ---
 async def log_broadcast(message_ids: list):
-    # КОРРЕКТНОЕ ИСПОЛЬЗОВАНИЕ
     async with await get_db_connection() as db:
         await db.execute("INSERT INTO broadcast_log (message_ids_json) VALUES (?)", (json.dumps(message_ids),))
         await db.commit()
 
 async def get_last_broadcast() -> List[tuple] | None:
-    # КОРРЕКТНОЕ ИСПОЛЬЗОВАНИЕ
     async with await get_db_connection() as db:
         async with db.execute("SELECT message_ids_json FROM broadcast_log ORDER BY id DESC LIMIT 1") as cursor:
             row = await cursor.fetchone()
-            # row[0] вместо row['message_ids_json']
             return json.loads(row[0]) if row else None
 
 async def delete_last_broadcast_log() -> bool:
-    # КОРРЕКТНОЕ ИСПОЛЬЗОВАНИЕ
     async with await get_db_connection() as db:
         async with db.execute("SELECT id FROM broadcast_log ORDER BY id DESC LIMIT 1") as cursor:
             row = await cursor.fetchone()
@@ -248,9 +221,6 @@ async def delete_last_broadcast_log() -> bool:
 
 # --- Кэширование результатов сессии ---
 async def get_cached_session_results(record_book_number: str) -> Tuple[List[dict] | None, str | None]:
-    """
-    Возвращает (data, last_updated_iso_str) или (None, None).
-    """
     async with await get_db_connection() as db:
         async with db.execute("SELECT data_json, last_updated FROM session_cache WHERE record_book_number = ?", (record_book_number,)) as cursor:
             row = await cursor.fetchone()
@@ -274,10 +244,6 @@ async def save_cached_session_results(record_book_number: str, data: List[dict])
 
 # --- Заметки к предметам ---
 async def get_subject_note(user_id: int, subject_name: str) -> dict:
-    """
-    Возвращает dict с ключами 'note_text' и 'checklist' (list).
-    Если записи нет, возвращает пустую структуру.
-    """
     async with await get_db_connection() as db:
         async with db.execute("SELECT note_text, checklist_json FROM subject_notes WHERE user_id = ? AND subject_name = ?", (user_id, subject_name)) as cursor:
             row = await cursor.fetchone()

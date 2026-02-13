@@ -1,26 +1,18 @@
 services:
   schedule_bot:
     build: .
-
-    # Настройка перезапуска
     restart: always
-
-    # --- КРИТИЧЕСКОЕ ИЗМЕНЕНИЕ: ЯВНАЯ ИНЖЕКЦИЯ ПЕРЕМЕННЫХ ---
     environment:
-      # Portainer подставит значения из своего UI в эти переменные контейнера.
       - BB_LOGIN=${BB_LOGIN}
       - BB_PASSWORD=${BB_PASSWORD}
       - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
       - ADMIN_ID=${ADMIN_ID}
-    # --------------------------------------------------------
-
-    # Создание тома
     volumes:
       - ./data:/app/data
+    command: python -m app.main bot
 
   schedule_web:
     build: .
-    command: uvicorn web_app:app --host 0.0.0.0 --port 8000
     restart: always
     ports:
       - "8010:8000"
@@ -29,3 +21,5 @@ services:
     environment:
       - BB_LOGIN=${BB_LOGIN}
       - BB_PASSWORD=${BB_PASSWORD}
+    # Using the python wrapper or direct uvicorn. Wrapper is consistent.
+    command: python -m app.main web
