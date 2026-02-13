@@ -12,6 +12,7 @@ ADMIN_ID = config("ADMIN_ID", default=None, cast=int)
 
 BB_LOGIN = config("BB_LOGIN", default=None)
 BB_PASSWORD = config("BB_PASSWORD", default=None)
+BB_URL = config("BB_URL", default="https://bb.usurt.ru/")
 
 # Пути к данным
 DATA_DIR = os.path.join(BASE_DIR, "data")

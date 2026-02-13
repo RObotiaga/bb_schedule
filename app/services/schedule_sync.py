@@ -23,7 +23,7 @@ class ScheduleFetcher:
         self.download_dir = DOWNLOAD_DIR
         self.login = BB_LOGIN
         self.password = BB_PASSWORD
-        self.base_url = "https://bb.usurt.ru/" # or from config if different from BB_URL
+        self.base_url = BB_URL
 
     def ensure_download_dir(self):
         if os.path.exists(self.download_dir):
