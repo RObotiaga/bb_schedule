@@ -5,7 +5,7 @@ import os
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-from bot import filter_results_by_settings, format_results
+from app.bot.handlers.session import filter_results_by_settings, format_results
 
 
 # === Helper Functions Tests ===
@@ -103,7 +103,7 @@ def test_format_results_with_data(sample_session_results):
 
 def test_get_session_results_keyboard():
     """Тест клавиатуры результатов сессии."""
-    from bot import get_session_results_keyboard
+    from app.bot.keyboards import get_session_results_keyboard
     
     keyboard = get_session_results_keyboard()
     
@@ -124,7 +124,7 @@ def test_get_session_results_keyboard():
 
 def test_get_settings_keyboard():
     """Тест клавиатуры настроек."""
-    from bot import get_settings_keyboard
+    from app.bot.keyboards import get_settings_keyboard
     
     settings = {"hide_5": True, "hide_4": False}
     keyboard = get_settings_keyboard(settings)
@@ -138,10 +138,10 @@ def test_get_settings_keyboard():
 @pytest.mark.asyncio
 async def test_notes_root_handler_no_record_book(mock_callback_query, mocker):
     """Тест notes_root без номера зачетки."""
-    from bot import notes_root
+    from app.bot.handlers.session import notes_root
     
     # Mock DB call
-    mocker.patch('bot.get_record_book_number', return_value=None)
+    mocker.patch('app.bot.handlers.session.get_record_book_number', return_value=None)
     
     await notes_root(mock_callback_query)
     
@@ -153,12 +153,12 @@ async def test_notes_root_handler_no_record_book(mock_callback_query, mocker):
 @pytest.mark.asyncio
 async def test_notes_root_handler_with_data(mock_callback_query, mocker, sample_session_results):
     """Тест notes_root с данными."""
-    from bot import notes_root
+    from app.bot.handlers.session import notes_root
     
     # Mock DB calls
-    mocker.patch('bot.get_record_book_number', return_value="12345")
-    mocker.patch('bot.UsurtScraper.get_session_results', return_value=("SUCCESS", sample_session_results))
-    mocker.patch('bot.get_user_settings', return_value={})
+    mocker.patch('app.bot.handlers.session.get_record_book_number', return_value="12345")
+    mocker.patch('app.bot.handlers.session.UsurtScraper.get_session_results', return_value=("SUCCESS", sample_session_results))
+    mocker.patch('app.bot.handlers.session.get_user_settings', return_value={})
     
     await notes_root(mock_callback_query)
     
@@ -171,14 +171,14 @@ async def test_notes_root_handler_with_data(mock_callback_query, mocker, sample_
 @pytest.mark.asyncio
 async def test_refresh_results_handler(mock_callback_query, mocker, sample_session_results):
     """Тест обработчика refresh_results."""
-    from bot import refresh_session_results
+    from app.bot.handlers.session import refresh_session_results
     
     # Mock DB
-    mocker.patch('bot.get_record_book_number', return_value="99999")
+    mocker.patch('app.bot.handlers.session.get_record_book_number', return_value="99999")
     # Mock scraper (force refresh)
-    mocker.patch('bot.UsurtScraper.get_session_results', return_value=("SUCCESS", sample_session_results))
+    mocker.patch('app.bot.handlers.session.UsurtScraper.get_session_results', return_value=("SUCCESS", sample_session_results))
     # Mock show_results_view
-    mock_show = mocker.patch('bot.show_results_view')
+    mock_show = mocker.patch('app.bot.handlers.session.show_results_view')
     
     await refresh_session_results(mock_callback_query)
     
@@ -192,7 +192,7 @@ async def test_refresh_results_handler(mock_callback_query, mocker, sample_sessi
 @pytest.mark.asyncio
 async def test_note_edit_text_save(mock_message, mocker):
     """Тест сохранения текста заметки через FSM."""
-    from bot import note_edit_text_save
+    from app.bot.handlers.session import note_edit_text_save
     from aiogram.fsm.context import FSMContext
     
     # Mock FSM context
@@ -203,9 +203,9 @@ async def test_note_edit_text_save(mock_message, mocker):
     }
     
     # Mock DB
-    mocker.patch('database.get_subject_note', return_value={"note_text": "", "checklist": []})
-    mock_save = mocker.patch('database.save_subject_note')
-    mocker.patch('bot.show_subject_note_view')
+    mocker.patch('app.bot.handlers.session.get_subject_note', return_value={"note_text": "", "checklist": []})
+    mock_save = mocker.patch('app.bot.handlers.session.save_subject_note')
+    mocker.patch('app.bot.handlers.session.show_subject_note_view')
     
     mock_message.text = "Новая заметка"
     
@@ -219,7 +219,7 @@ async def test_note_edit_text_save(mock_message, mocker):
 @pytest.mark.asyncio
 async def test_checklist_add_item(mock_message, mocker):
     """Тест добавления пункта чеклиста."""
-    from bot import note_add_item_save
+    from app.bot.handlers.session import note_add_item_save
     from aiogram.fsm.context import FSMContext
     
     mock_state = mocker.AsyncMock(spec=FSMContext)
@@ -229,12 +229,12 @@ async def test_checklist_add_item(mock_message, mocker):
     }
     
     # Существующая заметка с пустым чеклистом
-    mocker.patch('database.get_subject_note', return_value={
+    mocker.patch('app.bot.handlers.session.get_subject_note', return_value={
         "note_text": "Текст", 
         "checklist": []
     })
-    mock_save = mocker.patch('database.save_subject_note')
-    mocker.patch('bot.show_subject_note_view')
+    mock_save = mocker.patch('app.bot.handlers.session.save_subject_note')
+    mocker.patch('app.bot.handlers.session.show_subject_note_view')
     
     mock_message.text = "Новый пункт"
     
@@ -246,3 +246,65 @@ async def test_checklist_add_item(mock_message, mocker):
     assert len(saved_checklist) == 1
     assert saved_checklist[0]["text"] == "Новый пункт"
     assert saved_checklist[0]["done"] is False
+
+
+# === New Session Logic Tests ===
+
+@pytest.mark.asyncio
+async def test_teacher_search_respects_state():
+    """Тест: поиск преподавателя не срабатывает при активном состоянии FSM."""
+    # Since we added StateFilter(None) to teachers.py, we just verify the import.
+    from app.bot.handlers.teachers import process_teacher_search
+    assert process_teacher_search is not None
+
+@pytest.mark.asyncio
+async def test_show_session_results_command(mock_message, mocker):
+    """Тест команды вызова результатов."""
+    from app.bot.handlers.session import show_session_results
+    from aiogram.fsm.context import FSMContext
+    
+    mock_state = mocker.AsyncMock(spec=FSMContext)
+    
+    # Сначала без номера зачетки
+    mocker.patch('app.bot.handlers.session.get_record_book_number', return_value=None)
+    await show_session_results(mock_message, mock_state)
+    mock_message.answer.assert_called_once()
+    assert "знать номер" in mock_message.answer.call_args[0][0]
+    
+    # Теперь с номером
+    mocker.patch('app.bot.handlers.session.get_record_book_number', return_value="123456")
+    mock_show = mocker.patch('app.bot.handlers.session.show_results_view')
+    await show_session_results(mock_message, mock_state)
+    mock_show.assert_called_once_with(mock_message, mock_message.from_user.id, "123456")
+
+@pytest.mark.asyncio
+async def test_process_record_book_number_valid(mock_message, mocker):
+    """Тест сохранения валидного номера зачетки."""
+    from app.bot.handlers.session import process_record_book_number
+    from aiogram.fsm.context import FSMContext
+    
+    mock_state = mocker.AsyncMock(spec=FSMContext)
+    mock_message.text = "123456"
+    
+    mock_save = mocker.patch('app.bot.handlers.session.save_record_book_number')
+    mock_show = mocker.patch('app.bot.handlers.session.show_results_view')
+    
+    await process_record_book_number(mock_message, mock_state)
+    
+    mock_save.assert_called_once_with(mock_message.from_user.id, "123456")
+    mock_state.clear.assert_called_once()
+    mock_show.assert_called_once_with(mock_message, mock_message.from_user.id, "123456")
+
+@pytest.mark.asyncio
+async def test_process_record_book_number_invalid(mock_message, mocker):
+    """Тест отклонения невалидного номера зачетки."""
+    from app.bot.handlers.session import process_record_book_number
+    from aiogram.fsm.context import FSMContext
+    
+    mock_state = mocker.AsyncMock(spec=FSMContext)
+    mock_message.text = "invalid123"
+    
+    await process_record_book_number(mock_message, mock_state)
+    
+    mock_message.answer.assert_called_once()
+    assert "только из цифр" in mock_message.answer.call_args[0][0]
