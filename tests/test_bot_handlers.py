@@ -308,3 +308,32 @@ async def test_process_record_book_number_invalid(mock_message, mocker):
     
     mock_message.answer.assert_called_once()
     assert "только из цифр" in mock_message.answer.call_args[0][0]
+
+@pytest.mark.asyncio
+async def test_format_schedule_message_with_subscription():
+    """Тест форматирования расписания с выделением подписок."""
+    from app.bot.handlers.schedule import format_schedule_message
+    from datetime import date
+    
+    lessons = [
+        {
+            'time': '9:00', 'subject': 'Моя пара', 
+            'teacher': 'Иванов И.И.', 'location': 'Ауд. 1', 
+            'week_type': 'Четная'
+        },
+        {
+            'time': '11:00', 'subject': 'Долг пара', 
+            'teacher': 'Петров П.П.', 'location': 'Ауд. 2', 
+            'week_type': 'Четная', 'is_subscription': True
+        }
+    ]
+    
+    result = format_schedule_message("ПИ-101", date(2025, 1, 1), lessons)
+    
+    assert "⏰ 9:00" in result
+    assert "Моя пара" in result
+    
+    assert "🔔 *[Подписка]* *11:00*" in result
+    assert "*Долг пара*" in result
+    assert "*Петров П.П.*" in result
+

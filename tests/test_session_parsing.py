@@ -7,7 +7,10 @@ import os
 # Add project root to sys.path to import modules
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-from process_schedules import parse_filename_context, parse_date_from_cell
+from app.services.schedule_sync import ScheduleProcessor
+processor = ScheduleProcessor()
+parse_filename_context = processor.parse_filename_context
+parse_date_from_cell = processor.parse_date_from_cell
 
 def test_parse_filename_context():
     # Test valid session filename

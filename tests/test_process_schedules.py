@@ -5,12 +5,12 @@ import os
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-from process_schedules import (
-    determine_week_type,
-    parse_date_from_cell,
-    parse_lesson_cell,
-    MONTHS_MAP
-)
+from app.services.schedule_sync import ScheduleProcessor, MONTHS_MAP
+
+processor = ScheduleProcessor()
+determine_week_type = processor.determine_week_type
+parse_date_from_cell = processor.parse_date_from_cell
+parse_lesson_cell = processor.parse_lesson_cell
 
 
 # === Helper Function Tests ===
@@ -34,15 +34,23 @@ def test_determine_week_type_unknown():
 
 def test_parse_date_from_cell():
     """Тест парсинга даты из ячейки."""
+    from datetime import datetime
+    
+    current_year = datetime.now().year
+    current_month = datetime.now().month
+    expected_dec_year = current_year - 1 if current_month < 5 else current_year
+    
+    context = {'year': current_year}
+    
     # Позитивные тесты
-    assert parse_date_from_cell("15 декабря", 2024) == "2024-12-15"
-    assert parse_date_from_cell("1 января", 2025) == "2025-01-01"
-    assert parse_date_from_cell("30 мая", 2024) == "2024-05-30"
+    assert parse_date_from_cell("15 декабря", context) == f"{expected_dec_year}-12-15"
+    assert parse_date_from_cell("1 января", {'year': 2025}) == f"{current_year}-01-01"
+    assert parse_date_from_cell("30 мая", context) == f"{current_year}-05-30"
     
     # Негативные тесты
-    assert parse_date_from_cell("какой-то текст", 2024) is None
-    assert parse_date_from_cell("", 2024) is None
-    assert parse_date_from_cell(123, 2024) is None  # Не строка
+    assert parse_date_from_cell("какой-то текст", context) is None
+    assert parse_date_from_cell("", context) is None
+    assert parse_date_from_cell(123, context) is None  # Не строка
 
 
 def test_parse_lesson_cell_full():

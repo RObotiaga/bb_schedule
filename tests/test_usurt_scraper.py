@@ -6,7 +6,7 @@ import os
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-from usurt_scraper import UsurtScraper
+from app.services.schedule_api import UsurtScraper
 
 
 @pytest.mark.asyncio
@@ -119,9 +119,9 @@ async def test_empty_subject_filtering():
 @pytest.mark.asyncio
 async def test_get_session_results_with_cache(mocker, sample_session_results):
     """Тест get_session_results с использованием кэша."""
-    # Mock database functions
-    mock_get_cache = mocker.patch('database.get_cached_session_results')
-    mock_save_cache = mocker.patch('database.save_cached_session_results')
+    # Mock database functions from their imported location
+    mock_get_cache = mocker.patch('app.services.schedule_api.get_cached_session_results')
+    mock_save_cache = mocker.patch('app.services.schedule_api.save_cached_session_results')
     
     # Настраиваем мок: кэш существует и свежий
     now_str = datetime.now(timezone.utc).isoformat()

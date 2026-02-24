@@ -103,10 +103,21 @@ def get_teacher_choices_keyboard(teachers: list):
     builder.adjust(1)
     return builder.as_markup()
 
-def get_teacher_nav_keyboard(current_offset: int):
+def get_teacher_nav_keyboard(current_offset: int, is_subscribed: bool = False):
     builder = InlineKeyboardBuilder()
-    builder.button(text="⬅️ Пред. день", callback_data=f"teacher_nav:{current_offset - 1}")
-    builder.button(text="След. день ➡️", callback_data=f"teacher_nav:{current_offset + 1}")
+    
+    if is_subscribed:
+        builder.button(text="🔕 Отписаться", callback_data="teacher_sub:unsubscribe")
+    else:
+        builder.button(text="🔔 Подписаться", callback_data="teacher_sub:subscribe")
+        
+    builder.adjust(1)
+    
+    row_buttons = [
+        InlineKeyboardButton(text="⬅️ Пред. день", callback_data=f"teacher_nav:{current_offset - 1}"),
+        InlineKeyboardButton(text="След. день ➡️", callback_data=f"teacher_nav:{current_offset + 1}")
+    ]
+    builder.row(*row_buttons)
     return builder.as_markup()
 
 def get_session_results_keyboard():

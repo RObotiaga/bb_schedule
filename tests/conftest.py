@@ -70,6 +70,14 @@ async def test_db():
             )
         """)
         
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS teacher_subscriptions (
+                user_id INTEGER,
+                teacher_name TEXT,
+                PRIMARY KEY (user_id, teacher_name)
+            )
+        """)
+        
         await db.commit()
     
     yield db_path

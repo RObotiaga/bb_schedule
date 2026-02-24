@@ -87,6 +87,15 @@ async def initialize_database():
             )
         """)
         
+        # Подписки на преподавателей
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS teacher_subscriptions (
+                user_id INTEGER,
+                teacher_name TEXT,
+                PRIMARY KEY (user_id, teacher_name)
+            )
+        """)
+        
         await db.commit()
     logging.info("База данных успешно инициализирована (aiosqlite).")
 
@@ -268,3 +277,33 @@ async def save_subject_note(user_id: int, subject_name: str, note_text: str, che
                 checklist_json=excluded.checklist_json
         """, (user_id, subject_name, note_text, json.dumps(checklist)))
         await db.commit()
+
+# --- Подписки на преподавателей ---
+async def subscribe_teacher(user_id: int, teacher_name: str):
+    async with await get_db_connection() as db:
+        await db.execute("""
+            INSERT OR IGNORE INTO teacher_subscriptions (user_id, teacher_name)
+            VALUES (?, ?)
+        """, (user_id, teacher_name))
+        await db.commit()
+
+async def unsubscribe_teacher(user_id: int, teacher_name: str):
+    async with await get_db_connection() as db:
+        await db.execute("""
+            DELETE FROM teacher_subscriptions
+            WHERE user_id = ? AND teacher_name = ?
+        """, (user_id, teacher_name))
+        await db.commit()
+
+async def get_subscribed_teachers(user_id: int) -> List[str]:
+    async with await get_db_connection() as db:
+        async with db.execute("SELECT teacher_name FROM teacher_subscriptions WHERE user_id = ?", (user_id,)) as cursor:
+            rows = await cursor.fetchall()
+            return [row[0] for row in rows]
+
+async def is_subscribed_to_teacher(user_id: int, teacher_name: str) -> bool:
+    async with await get_db_connection() as db:
+        async with db.execute("SELECT 1 FROM teacher_subscriptions WHERE user_id = ? AND teacher_name = ?", (user_id, teacher_name)) as cursor:
+            row = await cursor.fetchone()
+            return bool(row)
+

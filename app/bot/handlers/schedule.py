@@ -2,14 +2,13 @@ from aiogram import Router, F, types
 from aiogram.types import Message, CallbackQuery
 from datetime import date, datetime, timedelta
 from typing import List
-import sqlite3
 
-from app.core.database import get_user_group_db, get_schedule_by_group
+from app.core.database import get_user_group_db, get_schedule_by_group, get_subscribed_teachers, get_schedule_by_teacher
 from app.bot.keyboards import get_faculties_keyboard
 
 router = Router()
 
-def format_schedule_message(group: str, target_date: date, lessons: List[sqlite3.Row]) -> str:
+def format_schedule_message(group: str, target_date: date, lessons: List[dict]) -> str:
     months = ["Января", "Февраля", "Марта", "Апреля", "Мая", "Июня", "Июля", "Августа", "Сентября", "Октября", "Ноября", "Декабря"]
     weekdays = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"]
     date_str = f"{weekdays[target_date.weekday()]} {target_date.day} {months[target_date.month - 1]}"
@@ -26,15 +25,36 @@ def format_schedule_message(group: str, target_date: date, lessons: List[sqlite3
     else:
         header = f"*{week_type} неделя*\n*{group}*\n\n*{date_str}*"
     
-    lesson_parts = [f"⏰ {lesson['time']}\n-  `{lesson['subject']}`\n-  `{lesson['teacher']}`\n-  `{lesson['location']}`" for lesson in lessons]
+    lesson_parts = []
+    for lesson in lessons:
+        if lesson.get('is_subscription'):
+            part = f"🔔 *[Подписка]* *{lesson['time']}*\n-  *{lesson['subject']}*\n-  *{lesson['teacher']}*\n-  *{lesson['location']}*"
+        else:
+            part = f"⏰ {lesson['time']}\n-  `{lesson['subject']}`\n-  `{lesson['teacher']}`\n-  `{lesson['location']}`"
+        lesson_parts.append(part)
+        
     return f"{header}\n\n" + "\n\n".join(lesson_parts)
 
-async def show_schedule(target: Message | CallbackQuery, group: str, day_offset: int):
+async def show_schedule(target: Message | CallbackQuery, group: str, day_offset: int, user_id: int):
     target_date = date.today() + timedelta(days=day_offset)
     date_str = target_date.strftime("%Y-%m-%d")
     
-    lessons = await get_schedule_by_group(group, date_str)
-    text = format_schedule_message(group, target_date, lessons)
+    base_lessons = await get_schedule_by_group(group, date_str)
+    all_lessons = [dict(lesson) for lesson in base_lessons]
+    
+    # Fetch subscriptions
+    subscribed_teachers = await get_subscribed_teachers(user_id)
+    for teacher in subscribed_teachers:
+        teacher_lessons = await get_schedule_by_teacher(teacher, date_str)
+        for t_lesson in teacher_lessons:
+            lesson_dict = dict(t_lesson)
+            lesson_dict['is_subscription'] = True
+            all_lessons.append(lesson_dict)
+            
+    # Sort all lessons by time
+    all_lessons.sort(key=lambda x: x['time'])
+    
+    text = format_schedule_message(group, target_date, all_lessons)
     
     if isinstance(target, Message):
         await target.answer(text, parse_mode="Markdown")
@@ -65,4 +85,5 @@ async def day_button_handler(message: Message):
         target_weekday = days_map.get(message.text, 0)
         day_offset = (target_weekday - today_weekday) % 7
     
-    await show_schedule(message, user_group, day_offset)
+    await show_schedule(message, user_group, day_offset, message.from_user.id)
+

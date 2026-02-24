@@ -10,20 +10,21 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')
 
 # Monkey-patch DB_PATH before importing database
 original_db_path = None
-if 'config' in sys.modules:
-    import config
+if 'app.core.config' in sys.modules:
+    from app.core import config
     original_db_path = config.DB_PATH
 
-import database
+from app.core import database
 
 
 @pytest.fixture(autouse=True)
 async def patch_db_path(test_db, monkeypatch):
     """Автоматически подменяет DB_PATH на тестовую БД для всех тестов."""
     # Patch config module
-    import config
+    from app.core import config
     monkeypatch.setattr(config, "DB_PATH", test_db)
     # Patch database module's imported DB_PATH
+    from app.core import database
     monkeypatch.setattr(database, "DB_PATH", test_db)
     yield
 
@@ -267,3 +268,42 @@ async def test_get_schedule_by_teacher():
     result = await database.get_schedule_by_teacher("Петров П.П.", "2024-12-02")
     assert len(result) == 1
     assert result[0]['teacher'] == "Петров П.П."
+
+# === Teacher Subscriptions Tests ===
+
+@pytest.mark.asyncio
+async def test_subscribe_and_get_teachers():
+    """Тест подписки на преподавателя и получения списка подписок."""
+    user_id = 1111
+    teacher = "Иванов И.И."
+    
+    await database.subscribe_teacher(user_id, teacher)
+    subscriptions = await database.get_subscribed_teachers(user_id)
+    
+    assert len(subscriptions) == 1
+    assert subscriptions[0] == teacher
+
+@pytest.mark.asyncio
+async def test_is_subscribed_to_teacher():
+    """Тест проверки подписки на преподавателя."""
+    user_id = 2222
+    teacher = "Петров П.П."
+    
+    assert await database.is_subscribed_to_teacher(user_id, teacher) is False
+    
+    await database.subscribe_teacher(user_id, teacher)
+    
+    assert await database.is_subscribed_to_teacher(user_id, teacher) is True
+
+@pytest.mark.asyncio
+async def test_unsubscribe_teacher():
+    """Тест отписки от преподавателя."""
+    user_id = 3333
+    teacher = "Сидоров С.С."
+    
+    await database.subscribe_teacher(user_id, teacher)
+    assert await database.is_subscribed_to_teacher(user_id, teacher) is True
+    
+    await database.unsubscribe_teacher(user_id, teacher)
+    assert await database.is_subscribed_to_teacher(user_id, teacher) is False
+

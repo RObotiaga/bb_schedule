@@ -5,7 +5,7 @@ from aiogram.filters import StateFilter
 from datetime import date, datetime, timedelta
 import asyncio
 
-from app.core.database import get_schedule_by_teacher
+from app.core.database import get_schedule_by_teacher, is_subscribed_to_teacher, subscribe_teacher, unsubscribe_teacher
 from app.bot.keyboards import get_teacher_nav_keyboard, get_teacher_choices_keyboard, get_faculties_keyboard
 from app.core.state import GlobalState
 
@@ -48,12 +48,14 @@ async def show_teacher_schedule(target: Message | CallbackQuery, teacher_name: s
             lesson_parts.append(part)
         text = f"{header}\n\n" + "\n\n".join(lesson_parts)
         
-    keyboard = get_teacher_nav_keyboard(day_offset)
+    user_id = target.from_user.id
+    is_sub = await is_subscribed_to_teacher(user_id, teacher_name)
+    keyboard = get_teacher_nav_keyboard(day_offset, is_sub)
     
     if isinstance(target, Message):
         await target.answer(text, reply_markup=keyboard, parse_mode="Markdown")
     elif isinstance(target, CallbackQuery):
-        if target.message.text != text: 
+        if target.message.text != text or target.message.reply_markup != keyboard: 
             await target.message.edit_text(text, reply_markup=keyboard, parse_mode="Markdown")
         await target.answer()
 
@@ -123,3 +125,27 @@ async def process_teacher_nav(callback: CallbackQuery, state: FSMContext):
         await show_teacher_schedule(callback, teacher, offset)
     else:
         await callback.answer("Не выбран преподаватель. Напишите фамилию заново.", show_alert=True)
+
+@router.callback_query(F.data.startswith("teacher_sub:"))
+async def process_teacher_subscription(callback: CallbackQuery, state: FSMContext):
+    action = callback.data.split(":")[1]
+    data = await state.get_data()
+    teacher = data.get("current_teacher")
+    day_offset = data.get("day_offset", 0)
+    
+    if not teacher:
+        await callback.answer("Ошибка: преподаватель не выбран.", show_alert=True)
+        return
+        
+    user_id = callback.from_user.id
+    
+    if action == "subscribe":
+        await subscribe_teacher(user_id, teacher)
+        await callback.answer(f"Вы подписались на {teacher}")
+    elif action == "unsubscribe":
+        await unsubscribe_teacher(user_id, teacher)
+        await callback.answer(f"Вы отписались от {teacher}")
+        
+    # Refresh the view to update the keyboard
+    await show_teacher_schedule(callback, teacher, day_offset)
+
