@@ -59,15 +59,41 @@ async def show_teacher_schedule(target: Message | CallbackQuery, teacher_name: s
             await target.message.edit_text(text, reply_markup=keyboard, parse_mode="Markdown")
         await target.answer()
 
+def is_teacher_match(query: str, teacher_name: str) -> bool:
+    query = query.strip().lower()
+    teacher_name = teacher_name.lower().replace('.', ' ').replace(',', ' ')
+    
+    if query in teacher_name:
+        return True
+        
+    query_parts = query.split()
+    teacher_parts = teacher_name.split()
+    
+    if not query_parts or not teacher_parts:
+        return False
+        
+    last_name = query_parts[0]
+    if last_name not in teacher_parts[0]:
+        return False
+        
+    if len(query_parts) > 1 and len(teacher_parts) > 1:
+        if not teacher_parts[1].startswith(query_parts[1][0]):
+            return False
+            
+    if len(query_parts) > 2 and len(teacher_parts) > 2:
+        if not teacher_parts[2].startswith(query_parts[2][0]):
+            return False
+            
+    return True
+
 @router.message(StateFilter(None), lambda message: message.text and 1 <= len(message.text.split()) <= 3 and message.text not in ["Сегодня", "Завтра", "Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "/start", "📊 Мои результаты"])
 async def process_teacher_search(message: types.Message, state: FSMContext):
-    # Simple heuristic: if it's a single word and not a command/button, treat as teacher surname
-    search_query = message.text.strip().lower()
+    search_query = message.text.strip()
     
-    matches = [t for t in GlobalState.ALL_TEACHERS_LIST if search_query in t.lower()]
+    matches = [t for t in GlobalState.ALL_TEACHERS_LIST if is_teacher_match(search_query, t)]
     
     if not matches:
-        await message.reply("Преподаватель не найден. Попробуйте еще раз или выберите факультет:", reply_markup=get_faculties_keyboard(GlobalState.FACULTIES_LIST))
+        await message.reply("Преподаватель не найден. Проверьте правильность написания.")
         return
         
     if len(matches) == 1:
@@ -76,8 +102,8 @@ async def process_teacher_search(message: types.Message, state: FSMContext):
         await show_teacher_schedule(message, matches[0], 0)
     else:
         # Multiple matches
-        # Limit to 5-10 to avoid huge lists
-        if len(matches) > 10:
+        # Limit to 30 to avoid huge lists that hit Telegram's limits
+        if len(matches) > 30:
              await message.reply(f"Найдено слишком много совпадений ({len(matches)}). Уточните запрос.")
              return
              

@@ -18,9 +18,13 @@ def test_config_loading_no_crash(monkeypatch):
     
     # Пытаемся импортировать config - он должен выбросить ValueError
     import importlib
-    import app.core.config
+    import sys
+    
+    if "app.core.config" in sys.modules:
+        del sys.modules["app.core.config"]
+        
     try:
-        importlib.reload(app.core.config)
+        import app.core.config
         pytest.fail("Ожидался ValueError из-за отсутствия токена")
     except ValueError as e:
         assert "TELEGRAM_BOT_TOKEN is missing" in str(e)
