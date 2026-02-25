@@ -20,14 +20,7 @@ async def periodic_update():
     else:
         logging.error("❌ Периодическое обновление завершилось ошибкой.")
 
-async def start_bot():
-    logging.info("Starting Bot...")
-    
-    # Init DB
-    await initialize_database()
-    await GlobalState.reload()
-    
-    bot = Bot(token=TELEGRAM_BOT_TOKEN)
+def create_dispatcher() -> Dispatcher:
     dp = Dispatcher(storage=MemoryStorage())
     
     # Include Routers
@@ -36,6 +29,17 @@ async def start_bot():
     dp.include_router(teachers.router)
     dp.include_router(session.router)
     dp.include_router(admin.router)
+    return dp
+
+async def start_bot():
+    logging.info("Starting Bot...")
+    
+    # Init DB
+    await initialize_database()
+    await GlobalState.reload()
+    
+    bot = Bot(token=TELEGRAM_BOT_TOKEN)
+    dp = create_dispatcher()
     
     # Scheduler
     scheduler = AsyncIOScheduler()

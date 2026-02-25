@@ -21,5 +21,7 @@ services:
     environment:
       - BB_LOGIN=${BB_LOGIN}
       - BB_PASSWORD=${BB_PASSWORD}
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
+      - ADMIN_ID=${ADMIN_ID}
     # Using the python wrapper or direct uvicorn. Wrapper is consistent.
     command: python -m app.main web

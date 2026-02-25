@@ -15,6 +15,17 @@ from app.bot.states import SessionResults, NoteEdit, ChecklistAdd
 
 router = Router()
 
+import re
+import math
+
+def get_course_from_semester(semester_str: str) -> str:
+    match = re.search(r'(\d+)\s*семестр', semester_str.lower())
+    if match:
+        sem_num = int(match.group(1))
+        course_num = math.ceil(sem_num / 2)
+        return f"{course_num} курс"
+    return "Остальное"
+
 def filter_results_by_settings(data: list, settings: dict) -> list:
     filtered = []
     for item in data:
@@ -32,25 +43,38 @@ def format_results(data: list, settings: dict) -> str:
     filtered_data = filter_results_by_settings(data, settings)
     if not filtered_data: return "📭 Все предметы скрыты настройками фильтрации."
 
-    semesters = {}
+    courses = {}
     for item in filtered_data:
         sem = item['semester']
-        if sem not in semesters: semesters[sem] = []
-        semesters[sem].append(item)
+        course = get_course_from_semester(sem)
+        if course not in courses: courses[course] = {}
+        if sem not in courses[course]: courses[course][sem] = []
+        courses[course][sem].append(item)
     
     output = []
-    for sem, items in semesters.items():
-        semester_lines = []
-        for item in items:
-            icon = "✅" if item['passed'] else "⚠️"
-            if not item['passed']: icon = "❌"
-            line = f"{icon} *{item['subject']}*\n   🎓 {item['grade']}"
-            if item['date']: line += f" ({item['date']})"
-            semester_lines.append(line)
+    
+    def extract_num(text):
+        match = re.search(r'\d+', text)
+        return int(match.group(0)) if match else 999
         
-        if semester_lines:
-            output.append(f"\n📅 *{sem}*")
-            output.extend(semester_lines)
+    sorted_courses = sorted(courses.keys(), key=extract_num)
+    
+    for course in sorted_courses:
+        output.append(f"\n🎓 *{course}*")
+        
+        sorted_sems = sorted(courses[course].keys(), key=extract_num)
+        for sem in sorted_sems:
+            semester_lines = []
+            for item in courses[course][sem]:
+                icon = "✅" if item['passed'] else "⚠️"
+                if not item['passed']: icon = "❌"
+                line = f"{icon} *{item['subject']}*\n   🔹 {item['grade']}"
+                if item['date']: line += f" ({item['date']})"
+                semester_lines.append(line)
+            
+            if semester_lines:
+                output.append(f"📅 _{sem}_")
+                output.extend(semester_lines)
             
     return "\n".join(output)
 

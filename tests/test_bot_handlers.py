@@ -258,6 +258,37 @@ async def test_teacher_search_respects_state():
     assert process_teacher_search is not None
 
 @pytest.mark.asyncio
+async def test_teacher_search_multi_word(mock_message, mocker):
+    """Тест: поиск преподавателя работает для 1, 2 и 3 слов (ФИО)."""
+    from app.bot.handlers.teachers import process_teacher_search
+    from aiogram.fsm.context import FSMContext
+    from app.core.state import GlobalState
+    
+    mock_state = mocker.AsyncMock(spec=FSMContext)
+    
+    # Мокаем глобальный список преподавателей
+    mocker.patch.object(GlobalState, 'ALL_TEACHERS_LIST', ["Сергеев Евгений Алексеевич"])
+    
+    # 1. Одно слово (Фамилия)
+    mock_message.text = "Сергеев"
+    await process_teacher_search(mock_message, mock_state)
+    mock_state.update_data.assert_called_with(current_teacher="Сергеев Евгений Алексеевич", day_offset=0)
+    
+    mock_state.update_data.reset_mock()
+    
+    # 2. Два слова (Фамилия Имя)
+    mock_message.text = "Сергеев Евгений"
+    await process_teacher_search(mock_message, mock_state)
+    mock_state.update_data.assert_called_with(current_teacher="Сергеев Евгений Алексеевич", day_offset=0)
+
+    mock_state.update_data.reset_mock()
+
+    # 3. Три слова (ФИО полностью)
+    mock_message.text = "Сергеев Евгений Алексеевич"
+    await process_teacher_search(mock_message, mock_state)
+    mock_state.update_data.assert_called_with(current_teacher="Сергеев Евгений Алексеевич", day_offset=0)
+
+@pytest.mark.asyncio
 async def test_show_session_results_command(mock_message, mocker):
     """Тест команды вызова результатов."""
     from app.bot.handlers.session import show_session_results

@@ -38,6 +38,10 @@ if not os.path.exists(TEMPLATES_DIR):
 templates = Jinja2Templates(directory=TEMPLATES_DIR)
 
 # API Endpoints
+@app.get("/health")
+async def health_check():
+    return {"status": "ok", "service": "schedule_web"}
+
 @app.get("/api/faculties")
 async def get_faculties():
     return GlobalState.FACULTIES_LIST

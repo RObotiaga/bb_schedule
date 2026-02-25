@@ -59,7 +59,7 @@ async def show_teacher_schedule(target: Message | CallbackQuery, teacher_name: s
             await target.message.edit_text(text, reply_markup=keyboard, parse_mode="Markdown")
         await target.answer()
 
-@router.message(StateFilter(None), lambda message: message.text and len(message.text.split()) == 1 and message.text not in ["Сегодня", "Завтра", "Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "/start", "📊 Мои результаты"])
+@router.message(StateFilter(None), lambda message: message.text and 1 <= len(message.text.split()) <= 3 and message.text not in ["Сегодня", "Завтра", "Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "/start", "📊 Мои результаты"])
 async def process_teacher_search(message: types.Message, state: FSMContext):
     # Simple heuristic: if it's a single word and not a command/button, treat as teacher surname
     search_query = message.text.strip().lower()

@@ -8,7 +8,8 @@ BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__fil
 
 # --- КОНФИГУРАЦИЯ ---
 TELEGRAM_BOT_TOKEN = config("TELEGRAM_BOT_TOKEN", default=None)
-ADMIN_ID = config("ADMIN_ID", default=None, cast=int)
+_admin_id_str = config("ADMIN_ID", default="")
+ADMIN_ID = int(_admin_id_str) if _admin_id_str.strip().isdigit() else None
 
 BB_LOGIN = config("BB_LOGIN", default=None)
 BB_PASSWORD = config("BB_PASSWORD", default=None)
@@ -28,7 +29,7 @@ if not os.path.exists(DOWNLOAD_DIR):
 # Проверка критических переменных
 if not TELEGRAM_BOT_TOKEN:
     print("Критическая ошибка: TELEGRAM_BOT_TOKEN не задан!")
-    sys.exit(1)
+    raise ValueError("TELEGRAM_BOT_TOKEN is missing")
 
 if not ADMIN_ID:
     print("Критическая ошибка: ADMIN_ID не задан!")
