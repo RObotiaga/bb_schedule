@@ -32,6 +32,7 @@ def filter_results_by_settings(data: list, settings: dict) -> list:
         if settings.get("hide_5") and item.get('grade_value') == 5: continue
         if settings.get("hide_4") and item.get('grade_value') == 4: continue
         if settings.get("hide_3") and item.get('grade_value') == 3: continue
+        if settings.get("hide_2") and item.get('grade_value') == 2: continue
         if settings.get("hide_passed_non_exam") and item.get('passed') and item.get('grade_value') is None: continue
         if settings.get("hide_failed") and not item.get('passed'): continue
         filtered.append(item)
@@ -79,6 +80,7 @@ def format_results(data: list, settings: dict) -> str:
             for item in courses[course][sem]:
                 icon = "✅" if item['passed'] else "⚠️"
                 if not item['passed']: icon = "❌"
+                if "неудовл" in item['grade'].lower(): icon = "❌"
                 line = f"{icon} *{item['subject']}*\n   🔹 {item['grade']}"
                 if item['date']: line += f" ({item['date']})"
                 semester_lines.append(line)

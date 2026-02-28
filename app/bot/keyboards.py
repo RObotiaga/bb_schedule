@@ -143,6 +143,7 @@ def get_settings_keyboard(settings: dict):
         btn("hide_5", "Скрыть 'Отлично' (5)"),
         btn("hide_4", "Скрыть 'Хорошо' (4)"),
         btn("hide_3", "Скрыть 'Удовл.' (3)"),
+        btn("hide_2", "Скрыть 'Неудовл.' (2)"),
         btn("hide_passed_non_exam", "Скрыть 'Зачет'"),
         btn("hide_failed", "Скрыть 'Незачет/Недопуск'")
     ]
