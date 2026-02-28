@@ -16,6 +16,15 @@ def test_config_loading_no_crash(monkeypatch):
     monkeypatch.delenv("TELEGRAM_BOT_TOKEN", raising=False)
     monkeypatch.delenv("ADMIN_ID", raising=False)
     
+    # Мокаем decouple.config, чтобы он не читал из .env файла
+    def mock_config(key, default=None, **kwargs):
+        if key == "ADMIN_ID":
+            return ""
+        return default
+    
+    import decouple
+    monkeypatch.setattr(decouple, "config", mock_config)
+    
     # Пытаемся импортировать config - он должен выбросить ValueError
     import importlib
     import sys
@@ -29,11 +38,11 @@ def test_config_loading_no_crash(monkeypatch):
     except ValueError as e:
         assert "TELEGRAM_BOT_TOKEN is missing" in str(e)
     
-    # Восстанавливаем оригинальный конфиг для других тестов в Pytest сессии
-    # В Pytest monkeypatch.undo() вызывается автоматически после теста, но
-    # нам нужно перезагрузить модуль с нормальным окружением
     monkeypatch.undo()
-    importlib.reload(app.core.config)
+    if "app.core.config" in sys.modules:
+        importlib.reload(sys.modules["app.core.config"])
+    else:
+        import app.core.config
 
 # --- 2. Тест инициализации FastAPI и Healthcheck ---
 def test_fastapi_healthcheck():

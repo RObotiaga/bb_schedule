@@ -56,8 +56,12 @@ class UsurtScraper:
                 count = await rows.count()
 
                 results = []
-                current_semester = "Неизвестный семестр"
                 current_year = ""
+                current_course = ""
+                current_semester_num = ""
+                
+                just_seen_year = False
+                just_seen_course = False
                 
                 grade_keywords = [
                     "отлично", "хорошо", "удовлетворительно", "неудовлетворительно", 
@@ -80,20 +84,30 @@ class UsurtScraper:
                     
                     # --- 1. Semester/Year Header Detection ---
                     if len(non_empty_cells) == 1:
-                        text = non_empty_cells[0]
+                        text = non_empty_cells[0].strip()
                         
                         if re.match(r'^\d{4}/\d{4}$', text):
                             current_year = text
+                            just_seen_year = True
+                            just_seen_course = False
                             continue
                             
-                        if "семестр" in text.lower() or text.isdigit():
-                            sem_label = f"{text} семестр" if text.isdigit() else text
-                            
-                            if current_year:
-                                current_semester = f"{sem_label} ({current_year})"
+                        if text.isdigit() or "семестр" in text.lower() or "курс" in text.lower():
+                            # First digit after year is course
+                            if just_seen_year:
+                                current_course = text.replace(" курс", "").strip() if not text.isdigit() else text
+                                just_seen_year = False
+                                just_seen_course = True
+                                continue
+                            # Second digit after year is semester
+                            elif just_seen_course:
+                                current_semester_num = text.replace(" семестр", "").strip() if not text.isdigit() else text
+                                just_seen_course = False
+                                continue
+                            # Subsequent single digits/labels are usually semesters in the same course/year
                             else:
-                                current_semester = sem_label
-                            continue
+                                current_semester_num = text.replace(" семестр", "").strip() if not text.isdigit() else text
+                                continue
 
                     # --- 2. Data Row Parsing ---
                     grade_index = -1
@@ -152,8 +166,12 @@ class UsurtScraper:
                     elif "незачет" in grade_lower or "недопуск" in grade_lower or "не явился" in grade_lower:
                         passed = False
                     
+                    sem_str = current_semester_num + " семестр" if current_semester_num.isdigit() else current_semester_num
+                    current_semester_label = f"{sem_str} ({current_year})" if current_year else sem_str
+
                     results.append({
-                        'semester': current_semester,
+                        'course': current_course,
+                        'semester': current_semester_label,
                         'subject': subject,
                         'grade': grade,
                         'date': date_val,

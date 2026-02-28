@@ -45,8 +45,12 @@ def format_results(data: list, settings: dict) -> str:
 
     courses = {}
     for item in filtered_data:
-        sem = item['semester']
-        course = get_course_from_semester(sem)
+        sem = item.get('semester', '')
+        if 'course' in item and item['course']:
+            course = f"{item['course']} курс"
+        else:
+            course = get_course_from_semester(sem)
+            
         if course not in courses: courses[course] = {}
         if sem not in courses[course]: courses[course][sem] = []
         courses[course][sem].append(item)
@@ -59,10 +63,17 @@ def format_results(data: list, settings: dict) -> str:
         
     sorted_courses = sorted(courses.keys(), key=extract_num)
     
+    def sem_sort_key(s):
+        year_m = re.search(r'(\d{4})/\d{4}', s)
+        year = int(year_m.group(1)) if year_m else 0
+        sem_m = re.search(r'(\d+)\s*семестр', s)
+        sem = int(sem_m.group(1)) if sem_m else 999
+        return (year, sem)
+    
     for course in sorted_courses:
         output.append(f"\n🎓 *{course}*")
         
-        sorted_sems = sorted(courses[course].keys(), key=extract_num)
+        sorted_sems = sorted(courses[course].keys(), key=sem_sort_key)
         for sem in sorted_sems:
             semester_lines = []
             for item in courses[course][sem]:
@@ -194,7 +205,14 @@ async def notes_root(callback: CallbackQuery):
         await callback.answer("Все предметы скрыты фильтрами.")
         return
 
-    semesters = sorted(list(set(d['semester'] for d in filtered_data)))
+    def sem_sort_key(s):
+        year_m = re.search(r'(\d{4})/\d{4}', s)
+        year = int(year_m.group(1)) if year_m else 0
+        sem_m = re.search(r'(\d+)\s*семестр', s)
+        sem = int(sem_m.group(1)) if sem_m else 999
+        return (year, sem)
+
+    semesters = sorted(list(set(d['semester'] for d in filtered_data)), key=sem_sort_key)
     builder = InlineKeyboardBuilder()
     for sem in semesters:
         builder.button(text=sem, callback_data=f"notes_sem:{sem}")
