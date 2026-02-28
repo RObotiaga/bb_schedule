@@ -64,6 +64,15 @@ def format_results(data: list, settings: dict) -> str:
         
     sorted_courses = sorted(courses.keys(), key=extract_num)
     
+    # Подсчет статистики
+    total_subjects = len(filtered_data)
+    debts = sum(1 for item in filtered_data if not item['passed'])
+    
+    output.append("📊 *Сводка*")
+    output.append(f"Всего предметов: {total_subjects}")
+    output.append(f"Долгов: {debts}")
+    output.append("")
+    
     def sem_sort_key(s):
         year_m = re.search(r'(\d{4})/\d{4}', s)
         year = int(year_m.group(1)) if year_m else 0

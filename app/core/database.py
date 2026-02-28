@@ -180,6 +180,13 @@ async def get_all_user_ids() -> List[int]:
             rows = await cursor.fetchall()
             return [row[0] for row in rows]
 
+async def get_users_with_record_books() -> List[Tuple[int, str]]:
+    """Возвращает список кортежей (user_id, record_book_number) для отслеживания сессии."""
+    async with await get_db_connection() as db:
+        async with db.execute("SELECT user_id, record_book_number FROM users WHERE record_book_number IS NOT NULL") as cursor:
+            rows = await cursor.fetchall()
+            return [(row[0], row[1]) for row in rows]
+
 async def get_all_courses() -> List[str]:
     """Возвращает отсортированный список уникальных курсов."""
     async with await get_db_connection() as db:

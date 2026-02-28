@@ -41,9 +41,15 @@ async def start_bot():
     bot = Bot(token=TELEGRAM_BOT_TOKEN)
     dp = create_dispatcher()
     
+    from app.services.session_tracker import run_session_tracking
+    
     # Scheduler
     scheduler = AsyncIOScheduler()
     scheduler.add_job(periodic_update, 'interval', hours=6) # Example: every 6 hours
+    
+    # Расписание фоновой проверки сессии (например, каждые 4 часа)
+    scheduler.add_job(run_session_tracking, 'interval', hours=4, args=[bot])
+    
     scheduler.start()
     
     await bot.delete_webhook(drop_pending_updates=True)
