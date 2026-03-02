@@ -86,7 +86,7 @@ def is_teacher_match(query: str, teacher_name: str) -> bool:
             
     return True
 
-@router.message(StateFilter(None), lambda message: message.text and 1 <= len(message.text.split()) <= 3 and message.text not in ["Сегодня", "Завтра", "Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "/start", "📊 Мои результаты"])
+@router.message(StateFilter(None), lambda message: message.text and 1 <= len(message.text.split()) <= 3 and not message.text.startswith("/") and message.text not in ["Сегодня", "Завтра", "Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "📊 Мои результаты"])
 async def process_teacher_search(message: types.Message, state: FSMContext):
     search_query = message.text.strip()
     
