@@ -1,5 +1,5 @@
 # Stage 1: Base (Dependencies)
-FROM mcr.microsoft.com/playwright/python:v1.55.0-jammy AS base
+FROM python:3.12-slim AS base
 WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt

@@ -18,7 +18,7 @@ def test_imports():
         from app.web import app
         
         assert True
-    except ImportError as e:
-        pytest.fail(f"Import failed: {e}")
-    except Exception as e:
-        pytest.fail(f"An error occurred during import: {e}")
+    except BaseException as e:
+        import traceback
+        traceback.print_exc()
+        raise

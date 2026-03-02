@@ -5,7 +5,6 @@ import shutil
 import logging
 import sqlite3
 import ssl
-import pandas as pd
 from datetime import datetime
 from urllib.parse import urljoin, unquote, quote
 

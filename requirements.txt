@@ -1,6 +1,7 @@
 requests>=2.32.5
-playwright==1.55.0
-pandas
+aiohttp
+beautifulsoup4
+lxml
 xlrd
 aiogram
 gitingest
