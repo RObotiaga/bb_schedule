@@ -95,6 +95,22 @@ async def initialize_database():
                 PRIMARY KEY (user_id, teacher_name)
             )
         """)
+
+        # Рейтинговые данные студентов
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS rating_data (
+                record_book TEXT PRIMARY KEY,
+                enrollment_year INTEGER,
+                subjects_json TEXT,
+                total_subjects INTEGER DEFAULT 0,
+                passed_subjects INTEGER DEFAULT 0,
+                pass_rate REAL DEFAULT 0.0,
+                cluster_id INTEGER,
+                is_expelled INTEGER DEFAULT 0,
+                last_academic_year TEXT,
+                last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
         
         await db.commit()
     logging.info("База данных успешно инициализирована (aiosqlite).")
@@ -313,4 +329,157 @@ async def is_subscribed_to_teacher(user_id: int, teacher_name: str) -> bool:
         async with db.execute("SELECT 1 FROM teacher_subscriptions WHERE user_id = ? AND teacher_name = ?", (user_id, teacher_name)) as cursor:
             row = await cursor.fetchone()
             return bool(row)
+
+# --- Рейтинг студентов ---
+
+async def save_rating_record(
+    record_book: str,
+    enrollment_year: int,
+    subjects_json: str,
+    total_subjects: int,
+    passed_subjects: int,
+    pass_rate: float,
+    last_academic_year: str,
+):
+    """Сохраняет или обновляет рейтинговые данные одной зачётки."""
+    async with await get_db_connection() as db:
+        await db.execute("""
+            INSERT INTO rating_data
+                (record_book, enrollment_year, subjects_json, total_subjects,
+                 passed_subjects, pass_rate, last_academic_year, last_updated)
+            VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+            ON CONFLICT(record_book) DO UPDATE SET
+                subjects_json=excluded.subjects_json,
+                total_subjects=excluded.total_subjects,
+                passed_subjects=excluded.passed_subjects,
+                pass_rate=excluded.pass_rate,
+                last_academic_year=excluded.last_academic_year,
+                last_updated=CURRENT_TIMESTAMP
+        """, (record_book, enrollment_year, subjects_json, total_subjects,
+              passed_subjects, pass_rate, last_academic_year))
+        await db.commit()
+
+
+async def update_rating_cluster(record_book: str, cluster_id: int, is_expelled: int):
+    """Обновляет кластер и статус отчисления."""
+    async with await get_db_connection() as db:
+        await db.execute(
+            "UPDATE rating_data SET cluster_id = ?, is_expelled = ? WHERE record_book = ?",
+            (cluster_id, is_expelled, record_book),
+        )
+        await db.commit()
+
+
+async def get_rating_position(record_book: str, scope: str = "all") -> tuple[int, int] | None:
+    """
+    Возвращает (позиция, всего) в рейтинге.
+    scope: 'cluster' — по специальности, 'year' — по году, 'all' — все неотчисленные.
+    """
+    async with await get_db_connection() as db:
+        # Получаем данные текущего студента
+        async with db.execute(
+            "SELECT pass_rate, enrollment_year, cluster_id FROM rating_data WHERE record_book = ? AND is_expelled = 0",
+            (record_book,),
+        ) as cursor:
+            row = await cursor.fetchone()
+            if not row:
+                return None
+            my_rate, my_year, my_cluster = row[0], row[1], row[2]
+
+        # Формируем условие фильтрации
+        if scope == "cluster" and my_cluster is not None:
+            where = "is_expelled = 0 AND cluster_id = ?"
+            params = (my_cluster,)
+        elif scope == "year":
+            where = "is_expelled = 0 AND enrollment_year = ?"
+            params = (my_year,)
+        else:
+            where = "is_expelled = 0"
+            params = ()
+
+        # Позиция = сколько студентов имеют pass_rate строго больше + 1
+        async with db.execute(
+            f"SELECT COUNT(*) FROM rating_data WHERE {where} AND pass_rate > ?",
+            (*params, my_rate),
+        ) as cursor:
+            position = (await cursor.fetchone())[0] + 1
+
+        async with db.execute(
+            f"SELECT COUNT(*) FROM rating_data WHERE {where}", params
+        ) as cursor:
+            total = (await cursor.fetchone())[0]
+
+        return position, total
+
+
+async def get_top_students(scope: str = "all", scope_value=None, limit: int = 10) -> List[dict]:
+    """
+    Возвращает топ студентов по pass_rate.
+    scope: 'cluster', 'year', 'all'.
+    """
+    async with await get_db_connection() as db:
+        if scope == "cluster" and scope_value is not None:
+            query = "SELECT record_book, pass_rate, total_subjects, passed_subjects FROM rating_data WHERE is_expelled = 0 AND cluster_id = ? ORDER BY pass_rate DESC LIMIT ?"
+            params = (scope_value, limit)
+        elif scope == "year" and scope_value is not None:
+            query = "SELECT record_book, pass_rate, total_subjects, passed_subjects FROM rating_data WHERE is_expelled = 0 AND enrollment_year = ? ORDER BY pass_rate DESC LIMIT ?"
+            params = (scope_value, limit)
+        else:
+            query = "SELECT record_book, pass_rate, total_subjects, passed_subjects FROM rating_data WHERE is_expelled = 0 ORDER BY pass_rate DESC LIMIT ?"
+            params = (limit,)
+
+        async with db.execute(query, params) as cursor:
+            rows = await cursor.fetchall()
+            return [
+                {"record_book": r[0], "pass_rate": r[1], "total": r[2], "passed": r[3]}
+                for r in rows
+            ]
+
+
+async def get_all_rating_records(enrollment_year: int = None) -> List[dict]:
+    """Все записи рейтинга (для кластеризации)."""
+    async with await get_db_connection() as db:
+        if enrollment_year:
+            query = "SELECT record_book, subjects_json, total_subjects, last_academic_year FROM rating_data WHERE enrollment_year = ?"
+            params = (enrollment_year,)
+        else:
+            query = "SELECT record_book, subjects_json, total_subjects, last_academic_year FROM rating_data"
+            params = ()
+
+        async with db.execute(query, params) as cursor:
+            rows = await cursor.fetchall()
+            return [
+                {"record_book": r[0], "subjects_json": r[1], "total_subjects": r[2], "last_academic_year": r[3]}
+                for r in rows
+            ]
+
+
+async def get_student_cluster_info(record_book: str) -> dict | None:
+    """Возвращает кластер и год зачисления студента."""
+    async with await get_db_connection() as db:
+        async with db.execute(
+            "SELECT cluster_id, enrollment_year, pass_rate, total_subjects, passed_subjects, is_expelled FROM rating_data WHERE record_book = ?",
+            (record_book,),
+        ) as cursor:
+            row = await cursor.fetchone()
+            if not row:
+                return None
+            return {
+                "cluster_id": row[0],
+                "enrollment_year": row[1],
+                "pass_rate": row[2],
+                "total_subjects": row[3],
+                "passed_subjects": row[4],
+                "is_expelled": row[5],
+            }
+
+
+async def get_cluster_size(cluster_id: int) -> int:
+    """Количество неотчисленных в кластере."""
+    async with await get_db_connection() as db:
+        async with db.execute(
+            "SELECT COUNT(*) FROM rating_data WHERE cluster_id = ? AND is_expelled = 0",
+            (cluster_id,),
+        ) as cursor:
+            return (await cursor.fetchone())[0]
 

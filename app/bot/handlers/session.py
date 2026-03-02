@@ -5,7 +5,8 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder, InlineKeyboardButton
 
 from app.core.database import (
     get_record_book_number, save_record_book_number, get_user_settings, 
-    update_user_settings, get_subject_note, save_subject_note
+    update_user_settings, get_subject_note, save_subject_note,
+    get_student_cluster_info, get_rating_position,
 )
 from app.services.schedule_api import UsurtScraper
 from app.bot.keyboards import (
@@ -38,7 +39,7 @@ def filter_results_by_settings(data: list, settings: dict) -> list:
         filtered.append(item)
     return filtered
 
-def format_results(data: list, settings: dict) -> str:
+def format_results(data: list, settings: dict, rating_info: dict | None = None) -> str:
     if not data: return "📭 Результаты не найдены."
     
     filtered_data = filter_results_by_settings(data, settings)
@@ -64,13 +65,24 @@ def format_results(data: list, settings: dict) -> str:
         
     sorted_courses = sorted(courses.keys(), key=extract_num)
     
-    # Подсчет статистики
-    total_subjects = len(filtered_data)
+    # Статистика по ВСЕМ предметам (без фильтров) для объективного показателя
+    all_total = len(data)
+    all_passed = sum(1 for item in data if item['passed'])
+    all_pass_rate = (all_passed / all_total * 100) if all_total > 0 else 0
+    
+    # Статистика по отфильтрованным (для отображения долгов)
     debts = sum(1 for item in filtered_data if not item['passed'])
     
     output.append("📊 *Сводка*")
-    output.append(f"Всего предметов: {total_subjects}")
+    output.append(f"Всего предметов: {all_total}")
+    output.append(f"Закрыто: {all_passed}/{all_total} ({all_pass_rate:.1f}%)")
     output.append(f"Долгов: {debts}")
+    
+    # Место в рейтинге (если данные доступны)
+    if rating_info and rating_info.get("position"):
+        pos, total = rating_info["position"]
+        output.append(f"📍 Место в группе: {pos} из {total}")
+    
     output.append("")
     
     def sem_sort_key(s):
@@ -117,7 +129,13 @@ async def show_results_view(target: Message | CallbackQuery, user_id: int, recor
         text = "❌ Ошибка при получении данных. Попробуйте позже."
         await msg.edit_text(text, reply_markup=get_session_results_keyboard())
     else:
-        formatted_text = format_results(results_data, settings)
+        # Получаем рейтинговую информацию (если доступна)
+        rating_info = None
+        cluster_pos = await get_rating_position(record_book_number, "cluster")
+        if cluster_pos:
+            rating_info = {"position": cluster_pos}
+        
+        formatted_text = format_results(results_data, settings, rating_info)
         if len(formatted_text) > 4000:
             parts = [formatted_text[i:i+4000] for i in range(0, len(formatted_text), 4000)]
             for i, part in enumerate(parts):
