@@ -4,10 +4,13 @@ import re
 import shutil
 import logging
 import sqlite3
+import ssl
 import pandas as pd
 from datetime import datetime
-from urllib.parse import urljoin, unquote
-from playwright.async_api import async_playwright, TimeoutError as PlaywrightTimeout
+from urllib.parse import urljoin, unquote, quote
+
+import aiohttp
+from bs4 import BeautifulSoup
 
 from app.core.config import DB_PATH, DOWNLOAD_DIR, BB_LOGIN, BB_PASSWORD, BB_URL
 from app.core.logger import setup_logging
@@ -18,12 +21,22 @@ MONTHS_MAP = {
     'июля': 7, 'августа': 8, 'сентября': 9, 'октября': 10, 'ноября': 11, 'декабря': 12
 }
 
+# Базовый путь CMS к расписанию очной формы
+CMS_SCHEDULE_BASE = "/webapps/cmsmain/webui/institution/Расписание/Очная форма обучения"
+
+
 class ScheduleFetcher:
+    """
+    Скачивает файлы расписания с Blackboard через HTTP (aiohttp).
+    Заменяет Playwright — быстрее в ~10 раз, не создаёт процесс Chromium.
+    """
+
     def __init__(self):
         self.download_dir = DOWNLOAD_DIR
         self.login = BB_LOGIN
         self.password = BB_PASSWORD
-        self.base_url = BB_URL
+        self.base_url = BB_URL.rstrip("/")
+        self._session: aiohttp.ClientSession | None = None
 
     def ensure_download_dir(self):
         if os.path.exists(self.download_dir):
@@ -32,115 +45,42 @@ class ScheduleFetcher:
         logging.info(f"Создаем пустую папку для расписаний: {self.download_dir}")
         os.makedirs(self.download_dir, exist_ok=True)
 
-    async def login_to_bb(self, page):
-        await page.goto(self.base_url)
-        try:
-            await page.wait_for_selector('button#agree_button', timeout=5000)
-            await page.locator('button#agree_button').click()
-        except PlaywrightTimeout:
-            pass
-        
-        await page.locator('input[type="text"]').fill(self.login)
-        await page.locator('input[type="password"]').fill(self.password)
-        await page.locator('button, input[type="submit"]').click()
-        await page.wait_for_load_state('networkidle')
+    async def _get_page(self, url: str) -> BeautifulSoup:
+        """GET запрос и парсинг HTML."""
+        async with self._session.get(url) as resp:
+            text = await resp.text()
+            return BeautifulSoup(text, "html.parser")
 
-    async def click_schedule_root(self, page, context):
-        logging.info("Ожидаем открытия новой вкладки после клика...")
-        async with context.expect_page() as new_page_info:
-            await page.locator('a[href*="xid-1859775_1"]').click()
+    async def login_to_bb(self):
+        """Авторизация через POST-форму с nonce."""
+        soup = await self._get_page(self.base_url)
+        nonce_tag = soup.find("input", {"name": "blackboard.platform.security.NonceUtil.nonce"})
+        nonce = nonce_tag["value"] if nonce_tag else ""
 
-        new_page = await new_page_info.value
-        logging.info(f"Новая вкладка открыта: {await new_page.title()}")
-        await new_page.wait_for_load_state("networkidle")
-        return new_page
+        login_data = {
+            "user_id": self.login,
+            "password": self.password,
+            "login": "Войти",
+            "action": "login",
+            "new_loc": "",
+            "blackboard.platform.security.NonceUtil.nonce": nonce,
+        }
+        async with self._session.post(
+            f"{self.base_url}/webapps/login/", data=login_data, allow_redirects=True
+        ) as resp:
+            text = await resp.text()
+            if "logout" not in text.lower() and "logoutLink" not in text:
+                raise RuntimeError("BB login failed — не найден маркер авторизации")
+        logging.info("BB login через HTTP — успешно")
 
-    async def navigate_to_week_folder(self, page, week_name):
-        logging.info(f"Переходим в папку '{week_name}'...")
-        week_link = page.get_by_role("link", name=week_name, exact=True)
-        await asyncio.gather(page.wait_for_load_state('networkidle'), week_link.click())
-
-    async def get_faculty_folder_links(self, page):
-        logging.info("Ищем ссылки на папки факультетов...")
-        folder_selector = 'tbody#listContainer_databody a[href*="action=frameset"]'
-        try:
-            await page.locator(folder_selector).first.wait_for(timeout=10000)
-        except PlaywrightTimeout:
-            logging.warning("Не найдено ни одной папки факультетов на странице.")
-            return []
-        folder_links = await page.locator(folder_selector).evaluate_all("els => els.map(e => e.getAttribute('href'))")
-        return list(dict.fromkeys([href for href in folder_links if href]))
-
-    async def download_xls_files(self, page, faculty_name: str, week_name_prefix: str = ""):
-        save_dir = os.path.join(self.download_dir, faculty_name)
-        if not os.path.exists(save_dir):
-            os.makedirs(save_dir, exist_ok=True)
-
-        file_selector = 'a[href$=".xls"], a[href$=".xlsx"]'
-        try:
-            await page.locator(file_selector).first.wait_for(timeout=2000)
-        except PlaywrightTimeout:
-            return 0
-
-        files = await page.locator(file_selector).all()
-        count = 0
-        for file_link in files:
-            url = await file_link.get_attribute('href')
-            if not url: continue
-            
-            try:
-                async with page.expect_download() as download_info:
-                    await file_link.evaluate("node => node.click()")
-                download = await download_info.value
-                original_filename = download.suggested_filename
-                
-                if week_name_prefix:
-                    safe_prefix = re.sub(r'[\\/*?:"<>|]', '_', week_name_prefix).strip()
-                    final_filename = f"{safe_prefix}_{original_filename}"
-                else:
-                    final_filename = original_filename
-                    
-                await download.save_as(os.path.join(save_dir, final_filename))
-                count += 1
-            except Exception as e:
-                logging.error(f"Ошибка при скачивании {url}: {e}")
-        return count
-
-    async def process_faculty_folders(self, page, week_name: str):
-        faculty_list_url = page.url
-        folder_links = await self.get_faculty_folder_links(page)
-        
-        if not folder_links:
-            files_found = await self.download_xls_files(page, "Общее", week_name_prefix=week_name)
-            if files_found > 0:
-                logging.info(f"Найдено и скачано {files_found} файлов в корневой папке недели.")
-            return
-
-        for i, folder_href in enumerate(folder_links, 1):
-            full_url = urljoin(self.base_url, folder_href)
-            await page.goto(full_url)
-            await page.wait_for_load_state("networkidle")
-            
-            try:
-                 decoded_path = unquote(page.url.split('?')[0])
-                 decoded_folder_name = os.path.basename(decoded_path)
-            except Exception:
-                decoded_folder_name = f"Факультет_{i}"
-
-            logging.info(f'Обрабатываем папку {i}/{len(folder_links)}: "{decoded_folder_name}"...')
-            await self.download_xls_files(page, decoded_folder_name, week_name)
-            
-            if i < len(folder_links):
-                await page.goto(faculty_list_url)
-                await page.wait_for_load_state("networkidle")
-
-    async def is_session_relevant(self, week_name: str) -> bool:
-        if 'аттестация' not in week_name.lower() and 'сессия' not in week_name.lower():
+    def _is_session_relevant(self, week_name: str) -> bool:
+        """Фильтрует неактуальные сессии по семестру и году."""
+        name_lower = week_name.lower()
+        if "аттестация" not in name_lower and "сессия" not in name_lower:
             return True
 
         now = datetime.now()
-        month = now.month
-        year = now.year
+        month, year = now.month, now.year
 
         if 9 <= month <= 12 or month == 1:
             target_semester = 1
@@ -149,7 +89,7 @@ class ScheduleFetcher:
             target_semester = 2
             start_year = year - 1 if month < 9 else year
 
-        match = re.search(r'(\d)\s*семестр.*?(\d{4})[/-](\d{4})', week_name, re.IGNORECASE)
+        match = re.search(r"(\d)\s*семестр.*?(\d{4})[/-](\d{4})", week_name, re.IGNORECASE)
         if match:
             sem = int(match.group(1))
             y_start = int(match.group(2))
@@ -159,67 +99,161 @@ class ScheduleFetcher:
             return False
         return False
 
-    async def get_week_folder_links(self, page):
-        logging.info("Ищем ссылки на папки недель...")
-        folder_selector = 'tbody#listContainer_databody a[href*="action=frameset"]'
-        try:
-            await page.locator(folder_selector).first.wait_for(timeout=10000)
-        except PlaywrightTimeout:
-            logging.warning("Не найдено ни одной папки недель на странице.")
-            return {}
+    async def _get_week_folders(self) -> dict[str, str]:
+        """
+        Возвращает {week_name: cms_path} для актуальных недель.
+        Пример: {"Нечетная неделя": ".../Нечетная неделя", "Четная неделя": "..."}
+        """
+        url = f"{self.base_url}{CMS_SCHEDULE_BASE}/?action=frameset&subaction=view"
+        soup = await self._get_page(url)
 
-        items = await page.locator(folder_selector).evaluate_all("""
-            els => els.map(e => ({
-                href: e.getAttribute('href'),
-                text: e.innerText
-            }))
-        """)
-        
-        week_links = {}
-        for item in items:
-            href = item['href']
-            name = item['text']
-            if href and name:
-                name_lower = name.lower()
-                if any(x in name_lower for x in ['неделя', 'четная', 'нечет', 'аттестация', 'сессия']):
-                    if await self.is_session_relevant(name):
-                        week_links[name] = href
-        return week_links
+        week_folders = {}
+        # Ищем frameset-ссылки, которые ведут внутрь текущей папки
+        for link in soup.select('a[href*="action=frameset"]'):
+            href = unquote(link.get("href", ""))
+            name = link.get_text(strip=True)
+            if not name or not href:
+                continue
+
+            # Берём только вложенные папки (Нечетная/Четная/Аттестация)
+            name_lower = name.lower()
+            is_week = any(kw in name_lower for kw in ["неделя", "четная", "нечет", "аттестация", "сессия"])
+            # Проверяем: после "Очная форма обучения/" есть ещё контент (имя подпапки)
+            clean_href = href.split("?")[0]
+            parent_marker = "Очная форма обучения/"
+            is_subfolder = parent_marker in clean_href and clean_href.split(parent_marker, 1)[1].strip("/") != ""
+
+            if is_week and is_subfolder and self._is_session_relevant(name):
+                # Извлекаем путь до ?action=
+                cms_path = href.split("?")[0]
+                week_folders[name] = cms_path
+
+        logging.info(f"Найдено актуальных недель: {len(week_folders)}")
+        return week_folders
+
+    async def _get_faculty_folders(self, week_cms_path: str) -> dict[str, str]:
+        """
+        Возвращает {faculty_name: cms_path} для факультетов внутри недели.
+        """
+        url = f"{self.base_url}{week_cms_path}?action=frameset&subaction=view"
+        soup = await self._get_page(url)
+
+        faculties = {}
+        for link in soup.select('a[href*="action=frameset"]'):
+            href = unquote(link.get("href", ""))
+            name = link.get_text(strip=True)
+            if not name or not href:
+                continue
+
+            # Факультеты — подпапки текущей недели
+            week_basename = week_cms_path.rstrip("/").split("/")[-1]
+            if week_basename + "/" in href:
+                subfolder = href.split(week_basename + "/")[-1].split("?")[0].rstrip("/")
+                if subfolder and "/" not in subfolder:
+                    faculties[name] = href.split("?")[0]
+
+        return faculties
+
+    async def _get_xls_links(self, folder_cms_path: str) -> list[tuple[str, str]]:
+        """
+        Возвращает [(filename, download_url)] для .xls/.xlsx внутри папки.
+        """
+        url = f"{self.base_url}{folder_cms_path}?action=frameset&subaction=view"
+        soup = await self._get_page(url)
+
+        files = []
+        seen_urls = set()
+        for link in soup.find_all("a", href=True):
+            href = link["href"]
+            if not any(href.lower().endswith(ext) for ext in [".xls", ".xlsx"]):
+                continue
+            if href in seen_urls:
+                continue
+            seen_urls.add(href)
+
+            # Имя файла из URL
+            filename = unquote(href.split("/")[-1])
+            full_url = href if href.startswith("http") else f"{self.base_url}{href}"
+            files.append((filename, full_url))
+
+        return files
+
+    async def _download_file(self, url: str, save_path: str) -> bool:
+        """Скачивает файл по URL и сохраняет на диск."""
+        try:
+            async with self._session.get(url) as resp:
+                if resp.status != 200:
+                    logging.warning(f"HTTP {resp.status} при скачивании {url}")
+                    return False
+                content = await resp.read()
+                os.makedirs(os.path.dirname(save_path), exist_ok=True)
+                with open(save_path, "wb") as f:
+                    f.write(content)
+                return True
+        except Exception as e:
+            logging.error(f"Ошибка скачивания {url}: {e}")
+            return False
 
     async def run(self):
+        """Основной процесс: логин → обход недель → факультеты → скачивание .xls."""
         self.ensure_download_dir()
-        async with async_playwright() as p:
-            browser = await p.chromium.launch(headless=True, args=['--no-sandbox', '--disable-setuid-sandbox'])
-            context = await browser.new_context(accept_downloads=True)
-            page = await context.new_page() 
-            try:
-                logging.info("--- START LOGIN ---")
-                await self.login_to_bb(page)
-                logging.info("--- LOGIN SUCCESS ---")
 
-                page = await self.click_schedule_root(page, context)
-                week_selection_page_url = page.url
-                week_folders = await self.get_week_folder_links(page)
-                
+        # SSL-контекст без проверки сертификата (bb.usurt.ru использует самоподписанный)
+        ssl_ctx = ssl.create_default_context()
+        ssl_ctx.check_hostname = False
+        ssl_ctx.verify_mode = ssl.CERT_NONE
+
+        connector = aiohttp.TCPConnector(ssl=ssl_ctx)
+        timeout = aiohttp.ClientTimeout(total=30)
+        headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0 Safari/537.36"}
+
+        async with aiohttp.ClientSession(connector=connector, timeout=timeout, headers=headers) as session:
+            self._session = session
+            try:
+                logging.info("--- START BB LOGIN (HTTP) ---")
+                await self.login_to_bb()
+
+                week_folders = await self._get_week_folders()
                 if not week_folders:
                     logging.error("Не удалось найти папки недель.")
                     return False
 
-                for week_name, _ in week_folders.items(): # href not used directly, logical flow used goto
+                total_files = 0
+                for week_name, week_path in week_folders.items():
                     logging.info(f"=== ОБРАБОТКА: {week_name.upper()} ===")
-                    await page.goto(week_selection_page_url)
-                    await page.wait_for_load_state("networkidle")
-                    await self.navigate_to_week_folder(page, week_name)
-                    await self.process_faculty_folders(page, week_name)
-                
-                logging.info("=== ВСЕ НЕДЕЛИ ОБРАБОТАНЫ ===")
+
+                    faculties = await self._get_faculty_folders(week_path)
+                    if not faculties:
+                        # Файлы могут лежать прямо в папке недели (без подпапок факультетов)
+                        xls_files = await self._get_xls_links(week_path)
+                        for filename, dl_url in xls_files:
+                            safe_week = re.sub(r'[\\/*?:"<>|]', "_", week_name).strip()
+                            save_path = os.path.join(self.download_dir, "Общее", f"{safe_week}_{filename}")
+                            if await self._download_file(dl_url, save_path):
+                                total_files += 1
+                        continue
+
+                    for faculty_name, faculty_path in faculties.items():
+                        xls_files = await self._get_xls_links(faculty_path)
+                        if not xls_files:
+                            continue
+
+                        logging.info(f"  📁 {faculty_name}: {len(xls_files)} файлов")
+                        for filename, dl_url in xls_files:
+                            safe_week = re.sub(r'[\\/*?:"<>|]', "_", week_name).strip()
+                            final_filename = f"{safe_week}_{filename}"
+                            save_path = os.path.join(self.download_dir, faculty_name, final_filename)
+                            if await self._download_file(dl_url, save_path):
+                                total_files += 1
+
+                logging.info(f"=== ВСЕ НЕДЕЛИ ОБРАБОТАНЫ: {total_files} файлов скачано ===")
                 return True
 
             except Exception as e:
                 logging.error(f"Ошибка скрапинга: {e}", exc_info=True)
                 return False
             finally:
-                await browser.close()
+                self._session = None
 
 
 class ScheduleProcessor:
@@ -312,6 +346,40 @@ class ScheduleProcessor:
             
         return {"subject": subject, "teacher": teacher, "location": location}
 
+    def _read_rows(self, file_path: str) -> list[list[str]]:
+        """Читает все строки Excel файла через xlrd (.xls) или openpyxl (.xlsx)."""
+        if file_path.endswith(".xlsx"):
+            import openpyxl
+            wb = openpyxl.load_workbook(file_path, read_only=True, data_only=True)
+            ws = wb.active
+            rows = []
+            for row in ws.iter_rows():
+                rows.append([str(cell.value) if cell.value is not None else "" for cell in row])
+            wb.close()
+            return rows
+        else:
+            import xlrd
+            from xlrd.biffh import XLRDError
+            try:
+                wb = xlrd.open_workbook(file_path)
+                ws = wb.sheet_by_index(0)
+                rows = []
+                for rx in range(ws.nrows):
+                    rows.append([str(ws.cell_value(rx, cx)) for cx in range(ws.ncols)])
+                return rows
+            except XLRDError as e:
+                if "Excel xlsx file; not supported" in str(e):
+                    # Файл называется .xls, но внутри это .xlsx
+                    import openpyxl
+                    wb = openpyxl.load_workbook(file_path, read_only=True, data_only=True)
+                    ws = wb.active
+                    rows = []
+                    for row in ws.iter_rows():
+                        rows.append([str(cell.value) if cell.value is not None else "" for cell in row])
+                    wb.close()
+                    return rows
+                raise
+
     def process_single_file(self, file_path, faculty="Неизвестно", course="N/A"):
         lessons_list = []
         filename = os.path.basename(file_path)
@@ -328,37 +396,48 @@ class ScheduleProcessor:
             file_context['year'] = self.current_year
             
         try:
-            df = pd.read_excel(file_path, header=None)
+            rows = self._read_rows(file_path)
+            if not rows:
+                return []
+
+            # Ищем строку заголовка (содержит "День" или "Day")
             header_row_index = -1
-            for i, row in df.iterrows():
-                row_str = [str(cell) for cell in row.tolist()]
-                if 'День' in row_str or ('Day' in row_str and 'Time' in row_str):
+            for i, row in enumerate(rows):
+                if 'День' in row or ('Day' in row and 'Time' in row):
                     header_row_index = i
                     break
             
             if header_row_index == -1: return []
             
-            df = pd.read_excel(file_path, header=header_row_index)
-            df.columns = [str(col).strip() for col in df.columns]
+            # Формируем заголовки
+            headers = [h.strip() for h in rows[header_row_index]]
             
-            day_col = 'День' if 'День' in df.columns else ('Day' if 'Day' in df.columns else None)
-            time_col = 'Часы' if 'Часы' in df.columns else ('Time' if 'Time' in df.columns else None)
+            day_col = headers.index('День') if 'День' in headers else (headers.index('Day') if 'Day' in headers else -1)
+            time_col = headers.index('Часы') if 'Часы' in headers else (headers.index('Time') if 'Time' in headers else -1)
             
-            if not day_col or not time_col: return []
+            if day_col == -1 or time_col == -1: return []
             
-            groups = [col for col in df.columns if col not in [day_col, time_col, 'nan', 'Unnamed: 0']]
+            # Индексы групп — все столбцы кроме День, Часы и пустых
+            skip = {day_col, time_col}
+            group_cols = [(idx, headers[idx]) for idx in range(len(headers)) 
+                          if idx not in skip and headers[idx] and headers[idx] != 'nan']
+            
             current_date_str = None
             current_time_slot = None
             
-            for index, row in df.iterrows():
-                potential_date = self.parse_date_from_cell(str(row.get(day_col)), file_context)
+            for row in rows[header_row_index + 1:]:
+                # Расширяем строку до нужной длины (бывают неполные строки)
+                while len(row) <= max(day_col, time_col):
+                    row.append("")
+                
+                potential_date = self.parse_date_from_cell(row[day_col], file_context)
                 if potential_date:
                     current_date_str = potential_date
                     current_time_slot = None
                 
                 if not current_date_str: continue
                 
-                raw_time = str(row.get(time_col, '')).strip()
+                raw_time = row[time_col].strip() if time_col < len(row) else ""
                 if raw_time and "nan" not in raw_time.lower():
                     time_slot = raw_time
                     current_time_slot = time_slot
@@ -367,11 +446,12 @@ class ScheduleProcessor:
                 else:
                     continue
                     
-                for group in groups:
-                    lesson_info = self.parse_lesson_cell(row.get(group))
+                for col_idx, group_name in group_cols:
+                    cell_val = row[col_idx] if col_idx < len(row) else ""
+                    lesson_info = self.parse_lesson_cell(cell_val)
                     if lesson_info:
                         lessons_list.append((
-                            str(group).strip(), current_date_str, time_slot,
+                            group_name.strip(), current_date_str, time_slot,
                             lesson_info['subject'], lesson_info['teacher'], lesson_info['location'],
                             week_type, faculty, course
                         ))

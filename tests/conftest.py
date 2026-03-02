@@ -20,6 +20,8 @@ async def test_db():
     
     # Инициализируем БД
     async with aiosqlite.connect(db_path) as db:
+        # Убираем WAL из тестов, чтобы не было проблем с потоками aiosqlite в pytest-asyncio
+        await db.execute("PRAGMA journal_mode=MEMORY;")
         await db.execute("""
             CREATE TABLE IF NOT EXISTS users (
                 user_id INTEGER PRIMARY KEY,

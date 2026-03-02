@@ -27,6 +27,7 @@ async def patch_db_path(test_db, monkeypatch):
     from app.core import database
     monkeypatch.setattr(database, "DB_PATH", test_db)
     yield
+    await database.close_db_connection()
 
 
 # === User CRUD Tests ===
@@ -111,10 +112,10 @@ async def test_settings_json_decode_error(monkeypatch):
     """Тест обработки невалидного JSON в настройках."""
     user_id = 333
     # Создаем запись с невалидным JSON напрямую в БД
-    async with await database.get_db_connection() as db:
-        await db.execute("INSERT INTO users (user_id, settings) VALUES (?, ?)", 
-                        (user_id, "invalid json"))
-        await db.commit()
+    db = await database.get_db_connection()
+    await db.execute("INSERT INTO users (user_id, settings) VALUES (?, ?)", 
+                    (user_id, "invalid json"))
+    await db.commit()
     
     result = await database.get_user_settings(user_id)
     assert result == {}
@@ -217,12 +218,12 @@ async def test_subject_note_invalid_json(monkeypatch):
     subject = "Тест"
     
     # Создаем запись с невалидным JSON
-    async with await database.get_db_connection() as db:
-        await db.execute(
-            "INSERT INTO subject_notes (user_id, subject_name, note_text, checklist_json) VALUES (?, ?, ?, ?)",
-            (user_id, subject, "Текст", "invalid json")
-        )
-        await db.commit()
+    db = await database.get_db_connection()
+    await db.execute(
+        "INSERT INTO subject_notes (user_id, subject_name, note_text, checklist_json) VALUES (?, ?, ?, ?)",
+        (user_id, subject, "Текст", "invalid json")
+    )
+    await db.commit()
     
     result = await database.get_subject_note(user_id, subject)
     assert result["note_text"] == "Текст"
@@ -242,12 +243,12 @@ async def test_get_schedule_by_group_empty():
 async def test_get_schedule_by_group_with_data():
     """Тест получения расписания для группы с данными."""
     # Сначала вставим тестовые данные
-    async with await database.get_db_connection() as db:
-        await db.execute("""
-            INSERT INTO schedule (faculty, course, group_name, week_type, lesson_date, time, subject, teacher, location)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """, ("ФИТ", "1", "ПИ-101", "четная", "2024-12-01", "9:00-10:30", "Математика", "Иванов И.И.", "Ауд. 101"))
-        await db.commit()
+    db = await database.get_db_connection()
+    await db.execute("""
+        INSERT INTO schedule (faculty, course, group_name, week_type, lesson_date, time, subject, teacher, location)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    """, ("ФИТ", "1", "ПИ-101", "четная", "2024-12-01", "9:00-10:30", "Математика", "Иванов И.И.", "Ауд. 101"))
+    await db.commit()
     
     result = await database.get_schedule_by_group("ПИ-101", "2024-12-01")
     assert len(result) == 1
@@ -258,12 +259,12 @@ async def test_get_schedule_by_group_with_data():
 async def test_get_schedule_by_teacher():
     """Тест получения расписания для преподавателя."""
     # Вставим тестовые данные
-    async with await database.get_db_connection() as db:
-        await db.execute("""
-            INSERT INTO schedule (faculty, course, group_name, week_type, lesson_date, time, subject, teacher, location)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """, ("ФИТ", "2", "ПИ-201", "нечетная", "2024-12-02", "11:00-12:30", "Физика", "Петров П.П.", "Ауд. 202"))
-        await db.commit()
+    db = await database.get_db_connection()
+    await db.execute("""
+        INSERT INTO schedule (faculty, course, group_name, week_type, lesson_date, time, subject, teacher, location)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    """, ("ФИТ", "2", "ПИ-201", "нечетная", "2024-12-02", "11:00-12:30", "Физика", "Петров П.П.", "Ауд. 202"))
+    await db.commit()
     
     result = await database.get_schedule_by_teacher("Петров П.П.", "2024-12-02")
     assert len(result) == 1

@@ -79,7 +79,7 @@ def test_session_parsing_1st_sem_2025_2026(tmp_path):
     Test parsing of a mocked Session file: 
     'Промежуточная аттестация за 1 семестр 2025-2026 уч.год Сессия 4 курс.xls'
     """
-    filename = "Промежуточная аттестация за 1 семестр 2025-2026 уч.год Сессия 4 курс.xls"
+    filename = "Промежуточная аттестация за 1 семестр 2025-2026 уч.год Сессия 4 курс.xlsx"
     file_path = tmp_path / filename
     
     # Create a dummy Excel file
