@@ -11,7 +11,7 @@ from urllib.parse import urljoin, unquote, quote
 import aiohttp
 from bs4 import BeautifulSoup
 
-from app.core.config import DOWNLOAD_DIR, DB_PATH, SCHEDULE_CMS_LOGIN, SCHEDULE_CMS_PASSWORD, SCHEDULE_CMS_URL
+from app.core.config import DOWNLOAD_DIR, DB_PATH, BB_LOGIN, BB_PASSWORD, BB_URL
 from app.core.logger import setup_logging
 from app.core.database import save_job_log, cleanup_old_job_logs
 
@@ -35,9 +35,9 @@ class ScheduleFetcher:
 
     def __init__(self):
         self.download_dir = DOWNLOAD_DIR
-        self.login = SCHEDULE_CMS_LOGIN
-        self.password = SCHEDULE_CMS_PASSWORD
-        self.base_url = SCHEDULE_CMS_URL.rstrip("/")
+        self.login = BB_LOGIN
+        self.password = BB_PASSWORD
+        self.base_url = BB_URL.rstrip("/")
         self._session: aiohttp.ClientSession | None = None
 
     def ensure_download_dir(self):
