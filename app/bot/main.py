@@ -25,10 +25,10 @@ def create_dispatcher() -> Dispatcher:
     
     # Include Routers
     dp.include_router(common.router)
+    dp.include_router(admin.router)
     dp.include_router(schedule.router)
     dp.include_router(teachers.router)
     dp.include_router(session.router)
-    dp.include_router(admin.router)
     dp.include_router(rating.router)
     return dp
 
