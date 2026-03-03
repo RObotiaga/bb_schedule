@@ -23,6 +23,7 @@ admin_keyboard = ReplyKeyboardMarkup(
     keyboard=[
         [KeyboardButton(text="🔄 Обновить расписание")],
         [KeyboardButton(text="📥 Перезагрузить структуру")],
+        [KeyboardButton(text="🏆 Обновить рейтинг")],
         [KeyboardButton(text="⬅️ Выйти из админ-панели")]
     ],
     resize_keyboard=True

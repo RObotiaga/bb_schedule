@@ -3,6 +3,7 @@ from aiogram.types import Message
 from app.bot.filters import IsAdmin
 from app.bot.keyboards import admin_keyboard
 from app.services.schedule_sync import run_full_sync
+from app.services.rating_updater import run_rating_update
 from app.core.state import GlobalState
 import logging
 
@@ -25,6 +26,17 @@ async def admin_reload_structure(message: Message):
     await message.answer("📥 Перезагружаю структуру из БД...")
     await GlobalState.reload()
     await message.answer("✅ Структура обновлена.", reply_markup=admin_keyboard)
+
+@router.message(IsAdmin(), F.text == "🏆 Обновить рейтинг")
+async def admin_update_rating(message: Message):
+    await message.answer("🏆 Запускаю обновление рейтинга (парсинг зачёток + кластеризация)...\n"
+                         "⏳ Это может занять некоторое время.")
+    try:
+        await run_rating_update()
+        await message.answer("✅ Рейтинг успешно обновлён!", reply_markup=admin_keyboard)
+    except Exception as e:
+        logging.exception("Ошибка при обновлении рейтинга")
+        await message.answer(f"❌ Ошибка при обновлении рейтинга: {e}", reply_markup=admin_keyboard)
 
 @router.message(IsAdmin(), F.text == "⬅️ Выйти из админ-панели")
 async def admin_exit(message: Message):
