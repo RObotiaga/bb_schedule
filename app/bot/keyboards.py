@@ -21,6 +21,7 @@ day_selection_keyboard = ReplyKeyboardMarkup(
 
 admin_keyboard = ReplyKeyboardMarkup(
     keyboard=[
+        [KeyboardButton(text="📊 Статус бота")],
         [KeyboardButton(text="🔄 Обновить расписание")],
         [KeyboardButton(text="📥 Перезагрузить структуру")],
         [KeyboardButton(text="🏆 Обновить рейтинг")],
@@ -111,8 +112,9 @@ def get_teacher_nav_keyboard(current_offset: int, is_subscribed: bool = False):
         builder.button(text="🔕 Отписаться", callback_data="teacher_sub:unsubscribe")
     else:
         builder.button(text="🔔 Подписаться", callback_data="teacher_sub:subscribe")
-        
-    builder.adjust(1)
+    
+    builder.button(text="📊 Статистика", callback_data="teacher_stats")
+    builder.adjust(2)
     
     row_buttons = [
         InlineKeyboardButton(text="⬅️ Пред. день", callback_data=f"teacher_nav:{current_offset - 1}"),

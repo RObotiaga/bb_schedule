@@ -5,10 +5,13 @@
 import json
 import logging
 import re
+from datetime import datetime
 
-from app.core.database import save_rating_record
+from app.core.database import save_rating_record, save_job_log, cleanup_old_job_logs
 from app.services.rating_scraper import scrape_all_records
 from app.services.clustering import run_clustering
+from app.services.cluster_mapper import map_clusters_to_groups
+from app.services.teacher_stats import calculate_teacher_stats
 
 
 def _compute_stats(data: list) -> dict:
@@ -59,20 +62,54 @@ async def run_rating_update():
     Полный цикл обновления рейтинга:
     1. Парсинг всех зачёток 2022 года
     2. Кластеризация
+    3. Маппинг кластеров на группы расписания
+    4. Расчёт статистики преподавателей
     """
-    logging.info("🏆 Начало обновления рейтинга...")
+    start_time = datetime.now()
+    logging.info(f"🏆 Начало обновления рейтинга: {start_time}...")
+    
+    details = {}
+    status = "ERROR"
 
-    # Шаг 1: Массовый парсинг
-    stats = await scrape_all_records(
-        year=2022,
-        start=1,
-        end=1523,
-        delay_range=(2, 8),
-        on_result=_on_record_parsed,
-    )
-    logging.info(f"📊 Парсинг завершён: {stats}")
+    try:
+        # Шаг 1: Массовый парсинг
+        stats = await scrape_all_records(
+            year=2022,
+            start=1,
+            end=1523,
+            delay_range=(2, 8),
+            on_result=_on_record_parsed,
+        )
+        logging.info(f"📊 Парсинг завершён: {stats}")
+        
+        details.update(stats)
 
-    # Шаг 2: Кластеризация и определение отчисленных
-    await run_clustering(enrollment_year=2022)
+        # Шаг 2: Кластеризация и определение отчисленных
+        await run_clustering(enrollment_year=2022)
 
-    logging.info("✅ Обновление рейтинга завершено")
+        # Шаг 3: Маппинг кластеров на группы расписания
+        await map_clusters_to_groups()
+        logging.info("🗺️ Маппинг кластеров завершён")
+
+        # Шаг 4: Расчёт статистики преподавателей
+        await calculate_teacher_stats()
+        logging.info("📊 Статистика преподавателей рассчитана")
+        
+        status = "SUCCESS"
+        logging.info("✅ Обновление рейтинга завершено")
+        
+    except Exception as e:
+        status = "ERROR"
+        details["error"] = str(e)
+        logging.exception("Ошибка при обновлении рейтинга")
+        
+    finally:
+        end_time = datetime.now()
+        duration = end_time - start_time
+        details["duration_seconds"] = duration.total_seconds()
+        
+        try:
+            await save_job_log("rating_update", start_time, end_time, status, details)
+            await cleanup_old_job_logs(days=30)
+        except Exception as e_log:
+            logging.error(f"Не удалось сохранить лог задачи: {e_log}")

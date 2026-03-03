@@ -80,6 +80,17 @@ async def test_db():
             )
         """)
         
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS job_logs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                job_name TEXT,
+                start_time TIMESTAMP,
+                end_time TIMESTAMP,
+                status TEXT,
+                details_json TEXT
+            )
+        """)
+        
         await db.commit()
     
     yield db_path

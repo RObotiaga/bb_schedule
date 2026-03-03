@@ -1,13 +1,14 @@
-"""Хендлер команды /top — рейтинг студента."""
-from aiogram import Router, F
+"""Хендлер команды /top — рейтинг группы студента."""
+from aiogram import Router
 from aiogram.types import Message
 from aiogram.filters import Command
 
+from app.core.config import ADMIN_ID
 from app.core.database import (
     get_record_book_number,
     get_student_cluster_info,
-    get_rating_position,
-    get_cluster_size,
+    get_top_students,
+    get_users_by_record_book,
 )
 
 router = Router()
@@ -18,8 +19,8 @@ async def cmd_top(message: Message):
     record_book = await get_record_book_number(message.from_user.id)
     if not record_book:
         await message.answer(
-            "❌ Сначала привяжи номер зачётки: нажми *📊 Мои результаты*.",
-            parse_mode="Markdown",
+            "❌ Сначала привяжи номер зачётки: нажми <b>📊 Мои результаты</b>.",
+            parse_mode="HTML",
         )
         return
 
@@ -36,35 +37,38 @@ async def cmd_top(message: Message):
         await message.answer("⚠️ Эта зачётка определена как отчисленная.")
         return
 
-    lines = [
-        "🏆 *Твой рейтинг*\n",
-        f"📊 Закрыто предметов: {info['passed_subjects']}/{info['total_subjects']} "
-        f"({info['pass_rate']:.1f}%)\n",
-    ]
+    is_admin = message.from_user.id == ADMIN_ID
+    cluster_id = info["cluster_id"]
 
-    # Рейтинг по специальности (кластеру)
-    cluster_pos = await get_rating_position(record_book, "cluster")
-    if cluster_pos and info["cluster_id"]:
-        cluster_size = await get_cluster_size(info["cluster_id"])
-        lines.append(
-            f"🎯 *Среди специальности* (кластер #{info['cluster_id']}, ~{cluster_size} чел.):\n"
-            f"   Место: *{cluster_pos[0]}* из {cluster_pos[1]}"
-        )
+    # Получаем всех студентов кластера, отсортированных по pass_rate
+    students = await get_top_students(scope="cluster", scope_value=cluster_id, limit=100)
 
-    # Рейтинг по году зачисления
-    year_pos = await get_rating_position(record_book, "year")
-    if year_pos:
-        lines.append(
-            f"\n🎓 *Среди {info['enrollment_year']} года* (не отчислены):\n"
-            f"   Место: *{year_pos[0]}* из {year_pos[1]}"
-        )
+    if not students:
+        await message.answer("📭 Нет данных по группе.")
+        return
 
-    # Общий рейтинг
-    all_pos = await get_rating_position(record_book, "all")
-    if all_pos:
-        lines.append(
-            f"\n🌍 *Среди всех неотчисленных*:\n"
-            f"   Место: *{all_pos[0]}* из {all_pos[1]}"
-        )
+    lines = [f"🏆 <b>Рейтинг группы</b> (кластер #{cluster_id})\n"]
+    for pos, student in enumerate(students, start=1):
+        rb = student["record_book"]
+        passed = student["passed"]
+        total = student["total"]
+        rate = student["pass_rate"]
 
-    await message.answer("\n".join(lines), parse_mode="Markdown")
+        entry = f"{pos}. {rb} — {passed}/{total} ({rate:.1f}%)"
+
+        # Для админа добавляем ссылки на телеграм-пользователей с этой зачёткой
+        if is_admin:
+            user_ids = await get_users_by_record_book(rb)
+            if user_ids:
+                user_links = " ".join(
+                    f'<a href="tg://user?id={uid}">#{uid}</a>' for uid in user_ids
+                )
+                entry += f" {user_links}"
+
+        # Выделяем строку текущего пользователя жирным
+        if rb == record_book:
+            entry = f"<b>{entry} ← ты</b>"
+
+        lines.append(entry)
+
+    await message.answer("\n".join(lines), parse_mode="HTML")

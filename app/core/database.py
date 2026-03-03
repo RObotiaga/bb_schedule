@@ -127,6 +127,43 @@ async def initialize_database():
     await db.execute("CREATE INDEX IF NOT EXISTS idx_rating_cluster ON rating_data (cluster_id)")
     await db.execute("CREATE INDEX IF NOT EXISTS idx_rating_year ON rating_data (enrollment_year)")
 
+    # Маппинг кластеров на реальные группы расписания
+    await db.execute("""
+        CREATE TABLE IF NOT EXISTS cluster_groups (
+            cluster_id INTEGER PRIMARY KEY,
+            group_name TEXT NOT NULL,
+            similarity REAL DEFAULT 0.0
+        )
+    """)
+
+    # Кэш статистики преподавателей (процент закрываемости)
+    await db.execute("""
+        CREATE TABLE IF NOT EXISTS teacher_stats (
+            teacher TEXT,
+            subject TEXT,
+            group_name TEXT,
+            total_students INTEGER DEFAULT 0,
+            passed_students INTEGER DEFAULT 0,
+            pass_rate REAL DEFAULT 0.0,
+            academic_year TEXT,
+            PRIMARY KEY (teacher, subject, group_name, academic_year)
+        )
+    """)
+    await db.execute("CREATE INDEX IF NOT EXISTS idx_teacher_stats_teacher ON teacher_stats (teacher)")
+
+    # Таблица для логирования фоновых задач (статусы бота)
+    await db.execute("""
+        CREATE TABLE IF NOT EXISTS job_logs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            job_name TEXT,
+            start_time TIMESTAMP,
+            end_time TIMESTAMP,
+            status TEXT,
+            details_json TEXT
+        )
+    """)
+    await db.execute("CREATE INDEX IF NOT EXISTS idx_job_logs_name ON job_logs (job_name)")
+
     await db.commit()
     logging.info("База данных успешно инициализирована (aiosqlite).")
 
@@ -217,6 +254,16 @@ async def get_users_with_record_books() -> List[Tuple[int, str]]:
         rows = await cursor.fetchall()
         return [(row[0], row[1]) for row in rows]
 
+
+async def get_users_by_record_book(record_book: str) -> List[int]:
+    """Возвращает список user_id всех пользователей, привязанных к данной зачётке."""
+    db = await get_db_connection()
+    async with db.execute(
+        "SELECT user_id FROM users WHERE record_book_number = ?", (record_book,)
+    ) as cursor:
+        rows = await cursor.fetchall()
+        return [row[0] for row in rows]
+
 async def get_all_courses() -> List[str]:
     """Возвращает отсортированный список уникальных курсов."""
     db = await get_db_connection()
@@ -262,6 +309,46 @@ async def delete_last_broadcast_log() -> bool:
             await db.commit()
             return True
         return False
+
+
+# --- Логирование фоновых задач (job_logs) ---
+from datetime import datetime
+
+async def save_job_log(job_name: str, start_time: datetime, end_time: datetime, status: str, details: dict):
+    db = await get_db_connection()
+    await db.execute("""
+        INSERT INTO job_logs (job_name, start_time, end_time, status, details_json) 
+        VALUES (?, ?, ?, ?, ?)
+    """, (
+        job_name, 
+        start_time.isoformat(), 
+        end_time.isoformat(), 
+        status, 
+        json.dumps(details, ensure_ascii=False)
+    ))
+    await db.commit()
+
+async def get_last_two_job_logs(job_name: str) -> List[dict]:
+    db = await get_db_connection()
+    async with db.execute(
+        "SELECT start_time, end_time, status, details_json FROM job_logs WHERE job_name = ? ORDER BY start_time DESC LIMIT 2", 
+        (job_name,)
+    ) as cursor:
+        rows = await cursor.fetchall()
+        result = []
+        for row in rows:
+            result.append({
+                "start_time": datetime.fromisoformat(row["start_time"]),
+                "end_time": datetime.fromisoformat(row["end_time"]),
+                "status": row["status"],
+                "details": json.loads(row["details_json"])
+            })
+        return result
+
+async def cleanup_old_job_logs(days: int = 30):
+    db = await get_db_connection()
+    await db.execute("DELETE FROM job_logs WHERE start_time < datetime('now', ?)", (f"-{days} days",))
+    await db.commit()
 
 # --- Кэширование результатов сессии ---
 async def get_cached_session_results(record_book_number: str) -> Tuple[List[dict] | None, str | None]:
@@ -495,3 +582,157 @@ async def get_cluster_size(cluster_id: int) -> int:
     ) as cursor:
         return (await cursor.fetchone())[0]
 
+
+# --- Маппинг кластеров → группы ---
+
+async def save_cluster_group(cluster_id: int, group_name: str, similarity: float):
+    """Сохраняет связь кластера с группой расписания."""
+    db = await get_db_connection()
+    await db.execute("""
+        INSERT INTO cluster_groups (cluster_id, group_name, similarity)
+        VALUES (?, ?, ?)
+        ON CONFLICT(cluster_id) DO UPDATE SET
+            group_name=excluded.group_name,
+            similarity=excluded.similarity
+    """, (cluster_id, group_name, similarity))
+    await db.commit()
+
+
+async def get_group_by_cluster(cluster_id: int) -> str | None:
+    """Возвращает имя группы по cluster_id."""
+    db = await get_db_connection()
+    async with db.execute(
+        "SELECT group_name FROM cluster_groups WHERE cluster_id = ?",
+        (cluster_id,),
+    ) as cursor:
+        row = await cursor.fetchone()
+        return row[0] if row else None
+
+
+async def get_all_cluster_groups() -> List[dict]:
+    """Все маппинги кластер → группа."""
+    db = await get_db_connection()
+    async with db.execute("SELECT cluster_id, group_name, similarity FROM cluster_groups") as cursor:
+        rows = await cursor.fetchall()
+        return [{"cluster_id": r[0], "group_name": r[1], "similarity": r[2]} for r in rows]
+
+
+# --- Статистика преподавателей ---
+
+async def save_teacher_stat(
+    teacher: str, subject: str, group_name: str,
+    total: int, passed: int, pass_rate: float, academic_year: str,
+):
+    """Сохраняет статистику преподавателя по предмету и группе."""
+    db = await get_db_connection()
+    await db.execute("""
+        INSERT INTO teacher_stats (teacher, subject, group_name, total_students, passed_students, pass_rate, academic_year)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(teacher, subject, group_name, academic_year) DO UPDATE SET
+            total_students=excluded.total_students,
+            passed_students=excluded.passed_students,
+            pass_rate=excluded.pass_rate
+    """, (teacher, subject, group_name, total, passed, pass_rate, academic_year))
+    await db.commit()
+
+
+async def get_teacher_stats(teacher_name: str) -> List[dict]:
+    """Статистика преподавателя по предметам/группам."""
+    db = await get_db_connection()
+    async with db.execute(
+        "SELECT subject, group_name, total_students, passed_students, pass_rate, academic_year "
+        "FROM teacher_stats WHERE teacher = ? ORDER BY academic_year DESC, subject",
+        (teacher_name,),
+    ) as cursor:
+        rows = await cursor.fetchall()
+        return [
+            {"subject": r[0], "group_name": r[1], "total": r[2],
+             "passed": r[3], "pass_rate": r[4], "year": r[5]}
+            for r in rows
+        ]
+
+
+async def get_teacher_overall_pass_rate(teacher_name: str) -> dict | None:
+    """Агрегированный процент закрываемости преподавателя."""
+    db = await get_db_connection()
+    async with db.execute(
+        "SELECT SUM(total_students), SUM(passed_students) FROM teacher_stats WHERE teacher = ?",
+        (teacher_name,),
+    ) as cursor:
+        row = await cursor.fetchone()
+        if not row or not row[0]:
+            return None
+        total, passed = row[0], row[1]
+        return {"total": total, "passed": passed, "pass_rate": round(passed / total * 100, 1) if total > 0 else 0.0}
+
+
+async def clear_teacher_stats():
+    """Очищает таблицу перед пересчётом."""
+    db = await get_db_connection()
+    await db.execute("DELETE FROM teacher_stats")
+    await db.commit()
+
+
+async def get_cluster_subjects(cluster_id: int) -> set:
+    """Возвращает множество предметов для кластера из rating_data."""
+    db = await get_db_connection()
+    async with db.execute(
+        "SELECT subjects_json FROM rating_data WHERE cluster_id = ? AND is_expelled = 0 LIMIT 1",
+        (cluster_id,),
+    ) as cursor:
+        row = await cursor.fetchone()
+        if not row or not row[0]:
+            return set()
+        try:
+            subjects = json.loads(row[0])
+            return {item["subject"] for item in subjects if item.get("subject")}
+        except (json.JSONDecodeError, KeyError):
+            return set()
+
+
+async def get_all_distinct_clusters() -> List[int]:
+    """Все уникальные cluster_id из rating_data."""
+    db = await get_db_connection()
+    async with db.execute(
+        "SELECT DISTINCT cluster_id FROM rating_data WHERE cluster_id IS NOT NULL AND is_expelled = 0"
+    ) as cursor:
+        rows = await cursor.fetchall()
+        return [r[0] for r in rows]
+
+
+async def get_schedule_groups_subjects() -> Dict[str, set]:
+    """Возвращает {group_name: {subjects...}} из расписания."""
+    db = await get_db_connection()
+    async with db.execute(
+        "SELECT DISTINCT group_name, subject FROM schedule WHERE subject IS NOT NULL"
+    ) as cursor:
+        rows = await cursor.fetchall()
+        result: Dict[str, set] = {}
+        for row in rows:
+            group = row[0]
+            if group not in result:
+                result[group] = set()
+            result[group].add(row[1])
+        return result
+
+
+async def get_schedule_teacher_subjects() -> List[dict]:
+    """Возвращает уникальные пары (преподаватель, предмет, группа) из расписания."""
+    db = await get_db_connection()
+    async with db.execute(
+        "SELECT DISTINCT teacher, subject, group_name FROM schedule "
+        "WHERE teacher IS NOT NULL AND teacher != 'Не указан'"
+    ) as cursor:
+        rows = await cursor.fetchall()
+        return [{"teacher": r[0], "subject": r[1], "group_name": r[2]} for r in rows]
+
+
+async def get_cluster_students_subjects(cluster_id: int) -> List[dict]:
+    """Все зачётки кластера с их предметами (неотчисленные)."""
+    db = await get_db_connection()
+    async with db.execute(
+        "SELECT record_book, subjects_json FROM rating_data WHERE cluster_id = ? AND is_expelled = 0",
+        (cluster_id,),
+    ) as cursor:
+        rows = await cursor.fetchall()
+        return [{"record_book": r[0], "subjects_json": r[1]} for r in rows]

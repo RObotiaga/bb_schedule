@@ -56,6 +56,12 @@ async def start_bot():
     scheduler.add_job(run_rating_update, 'cron', hour=2, minute=0)
     
     scheduler.start()
+    from aiogram.types import BotCommand
+    commands = [
+        BotCommand(command="start", description="Перезапустить бота"),
+        BotCommand(command="top", description="Рейтинг успеваемости"),
+    ]
+    await bot.set_my_commands(commands)
     
     await bot.delete_webhook(drop_pending_updates=True)
     await dp.start_polling(bot)

@@ -5,15 +5,18 @@ import shutil
 import logging
 import sqlite3
 import ssl
-from datetime import datetime
+from datetime import datetime, timezone
 from urllib.parse import urljoin, unquote, quote
 
 import aiohttp
 from bs4 import BeautifulSoup
 
-from app.core.config import DB_PATH, DOWNLOAD_DIR, BB_LOGIN, BB_PASSWORD, BB_URL
+from app.core.config import DOWNLOAD_DIR, DB_PATH, SCHEDULE_CMS_LOGIN, SCHEDULE_CMS_PASSWORD, SCHEDULE_CMS_URL
 from app.core.logger import setup_logging
+from app.core.database import save_job_log, cleanup_old_job_logs
 
+
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 # --- CONSTANTS ---
 MONTHS_MAP = {
     'января': 1, 'февраля': 2, 'марта': 3, 'апреля': 4, 'мая': 5, 'июня': 6,
@@ -32,9 +35,9 @@ class ScheduleFetcher:
 
     def __init__(self):
         self.download_dir = DOWNLOAD_DIR
-        self.login = BB_LOGIN
-        self.password = BB_PASSWORD
-        self.base_url = BB_URL.rstrip("/")
+        self.login = SCHEDULE_CMS_LOGIN
+        self.password = SCHEDULE_CMS_PASSWORD
+        self.base_url = SCHEDULE_CMS_URL.rstrip("/")
         self._session: aiohttp.ClientSession | None = None
 
     def ensure_download_dir(self):
@@ -193,9 +196,11 @@ class ScheduleFetcher:
             logging.error(f"Ошибка скачивания {url}: {e}")
             return False
 
-    async def run(self):
-        """Основной процесс: логин → обход недель → факультеты → скачивание .xls."""
+    async def run(self) -> list[str]:
+        """Основной процесс: логин → обход недель → факультеты → скачивание .xls.
+        Возвращает список путей к скачанным файлам."""
         self.ensure_download_dir()
+        downloaded_files = []
 
         # SSL-контекст без проверки сертификата (bb.usurt.ru использует самоподписанный)
         ssl_ctx = ssl.create_default_context()
@@ -215,9 +220,8 @@ class ScheduleFetcher:
                 week_folders = await self._get_week_folders()
                 if not week_folders:
                     logging.error("Не удалось найти папки недель.")
-                    return False
+                    return []
 
-                total_files = 0
                 for week_name, week_path in week_folders.items():
                     logging.info(f"=== ОБРАБОТКА: {week_name.upper()} ===")
 
@@ -229,7 +233,7 @@ class ScheduleFetcher:
                             safe_week = re.sub(r'[\\/*?:"<>|]', "_", week_name).strip()
                             save_path = os.path.join(self.download_dir, "Общее", f"{safe_week}_{filename}")
                             if await self._download_file(dl_url, save_path):
-                                total_files += 1
+                                downloaded_files.append(save_path)
                         continue
 
                     for faculty_name, faculty_path in faculties.items():
@@ -243,14 +247,14 @@ class ScheduleFetcher:
                             final_filename = f"{safe_week}_{filename}"
                             save_path = os.path.join(self.download_dir, faculty_name, final_filename)
                             if await self._download_file(dl_url, save_path):
-                                total_files += 1
+                                downloaded_files.append(save_path)
 
-                logging.info(f"=== ВСЕ НЕДЕЛИ ОБРАБОТАНЫ: {total_files} файлов скачано ===")
-                return True
+                logging.info(f"=== ВСЕ НЕДЕЛИ ОБРАБОТАНЫ: {len(downloaded_files)} файлов скачано ===")
+                return downloaded_files
 
             except Exception as e:
                 logging.error(f"Ошибка скрапинга: {e}", exc_info=True)
-                return False
+                return []
             finally:
                 self._session = None
 
@@ -336,8 +340,6 @@ class ScheduleProcessor:
                 else:
                     location_parts.append(line)
             location = " ".join(location_parts) if location_parts else "Не указана"
-        else:
-            location = "Не указана"
             
         subgroup_match = re.search(r'(\d\s*п/г)', cell_content, re.IGNORECASE)
         if subgroup_match:
@@ -511,8 +513,42 @@ class ScheduleProcessor:
             conn.close()
 
 async def run_full_sync():
+    start_time = datetime.now(timezone.utc)
+    logging.info(f"Начало полного цикла обновления расписания: {start_time}")
     fetcher = ScheduleFetcher()
-    if await fetcher.run():
-        processor = ScheduleProcessor()
-        return processor.run()
-    return False
+    processor = ScheduleProcessor()
+    
+    details = {}
+    status = "ERROR"
+    try:
+        xls_files = await fetcher.run()
+        details["excel_files_downloaded"] = len(xls_files)
+        
+        # Теоретически тут можно посчитать rows_processed, 
+        # но ScheduleProcessor напрямую через sqlite3 пишет в БД.
+        # Для простоты считаем успешным, если не было исключений.
+        if xls_files:
+            processor.run()
+            status = "SUCCESS"
+        else:
+            logging.warning("Не удалось скачать файлы расписания.")
+            details["error"] = "No files downloaded"
+            status = "ERROR"
+            
+        return status == "SUCCESS"
+        
+    except Exception as e:
+        status = "ERROR"
+        details["error"] = str(e)
+        logging.exception("Ошибка при обновлении расписания")
+        return False
+    finally:
+        end_time = datetime.now(timezone.utc)
+        duration = end_time - start_time
+        details["duration_seconds"] = duration.total_seconds()
+        
+        try:
+            await save_job_log("schedule_sync", start_time, end_time, status, details)
+            await cleanup_old_job_logs(days=30)
+        except Exception as e_log:
+            logging.error(f"Не удалось сохранить лог задачи: {e_log}")
