@@ -58,11 +58,24 @@ async def cmd_top(message: Message):
 
         # Для админа добавляем ссылки на телеграм-пользователей с этой зачёткой
         if is_admin:
-            user_ids = await get_users_by_record_book(rb)
-            if user_ids:
-                user_links = " ".join(
-                    f'<a href="tg://user?id={uid}">#{uid}</a>' for uid in user_ids
-                )
+            user_dicts = await get_users_by_record_book(rb)
+            if user_dicts:
+                links = []
+                for u in user_dicts:
+                    uid = u["user_id"]
+                    username = u["username"]
+                    first_name = u["first_name"]
+                    
+                    if username:
+                        text = f"@{username}"
+                    elif first_name:
+                        text = str(first_name)
+                    else:
+                        text = "Профиль"
+                        
+                    links.append(f'<a href="tg://user?id={uid}">{text}</a>')
+                
+                user_links = " ".join(links)
                 entry += f" {user_links}"
 
         # Выделяем строку текущего пользователя жирным

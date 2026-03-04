@@ -51,6 +51,18 @@ async def initialize_database():
         await db.commit()
     except aiosqlite.OperationalError:
         pass
+        
+    try:
+        await db.execute("ALTER TABLE users ADD COLUMN username TEXT")
+        await db.commit()
+    except aiosqlite.OperationalError:
+        pass
+        
+    try:
+        await db.execute("ALTER TABLE users ADD COLUMN first_name TEXT")
+        await db.commit()
+    except aiosqlite.OperationalError:
+        pass
     
     await db.execute("""
         CREATE TABLE IF NOT EXISTS schedule (
@@ -212,11 +224,17 @@ async def get_user_group_db(user_id: int) -> str | None:
         row = await cursor.fetchone()
         return row[0] if row else None 
 
-async def save_record_book_number(user_id: int, number: str):
+async def save_record_book_number(user_id: int, number: str, username: str | None = None, first_name: str | None = None):
     db = await get_db_connection()
-    cursor = await db.execute("UPDATE users SET record_book_number = ? WHERE user_id = ?", (number, user_id))
+    cursor = await db.execute(
+        "UPDATE users SET record_book_number = ?, username = ?, first_name = ? WHERE user_id = ?", 
+        (number, username, first_name, user_id)
+    )
     if cursor.rowcount == 0:
-        await db.execute("INSERT INTO users (user_id, record_book_number) VALUES (?, ?)", (user_id, number))
+        await db.execute(
+            "INSERT INTO users (user_id, record_book_number, username, first_name) VALUES (?, ?, ?, ?)", 
+            (user_id, number, username, first_name)
+        )
     await db.commit()
 
 async def get_record_book_number(user_id: int) -> str | None:
@@ -255,14 +273,14 @@ async def get_users_with_record_books() -> List[Tuple[int, str]]:
         return [(row[0], row[1]) for row in rows]
 
 
-async def get_users_by_record_book(record_book: str) -> List[int]:
-    """Возвращает список user_id всех пользователей, привязанных к данной зачётке."""
+async def get_users_by_record_book(record_book: str) -> List[dict]:
+    """Возвращает данные пользователей (id, username, first_name), привязанных к зачётке."""
     db = await get_db_connection()
     async with db.execute(
-        "SELECT user_id FROM users WHERE record_book_number = ?", (record_book,)
+        "SELECT user_id, username, first_name FROM users WHERE record_book_number = ?", (record_book,)
     ) as cursor:
         rows = await cursor.fetchall()
-        return [row[0] for row in rows]
+        return [{"user_id": r[0], "username": r[1], "first_name": r[2]} for r in rows]
 
 async def get_all_courses() -> List[str]:
     """Возвращает отсортированный список уникальных курсов."""

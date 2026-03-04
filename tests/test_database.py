@@ -70,10 +70,15 @@ async def test_save_and_get_record_book_number():
     user_id = 789
     record_number = "20220831"
     
-    await database.save_record_book_number(user_id, record_number)
+    await database.save_record_book_number(user_id, record_number, username="test_user", first_name="Test")
     result = await database.get_record_book_number(user_id)
     
     assert result == record_number
+    
+    # Можно проверить и сохранение username, вызвав get_users_by_record_book
+    users_info = await database.get_users_by_record_book(record_number)
+    assert len(users_info) == 1
+    assert users_info[0]["username"] == "test_user"
 
 
 @pytest.mark.asyncio

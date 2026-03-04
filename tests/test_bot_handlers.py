@@ -322,7 +322,12 @@ async def test_process_record_book_number_valid(mock_message, mocker):
     
     await process_record_book_number(mock_message, mock_state)
     
-    mock_save.assert_called_once_with(mock_message.from_user.id, "123456")
+    mock_save.assert_called_once_with(
+        mock_message.from_user.id, 
+        "123456", 
+        username=mock_message.from_user.username, 
+        first_name=mock_message.from_user.first_name
+    )
     mock_state.clear.assert_called_once()
     mock_show.assert_called_once_with(mock_message, mock_message.from_user.id, "123456")
 

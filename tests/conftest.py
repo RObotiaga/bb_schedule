@@ -27,7 +27,9 @@ async def test_db():
                 user_id INTEGER PRIMARY KEY,
                 group_name TEXT,
                 record_book_number TEXT,
-                settings TEXT
+                settings TEXT,
+                username TEXT,
+                first_name TEXT
             )
         """)
         

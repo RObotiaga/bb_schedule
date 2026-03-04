@@ -160,7 +160,12 @@ async def process_record_book_number(message: Message, state: FSMContext):
     if not number.isdigit():
         await message.answer("⚠️ Номер зачетной книжки должен состоять только из цифр. Попробуйте еще раз.")
         return
-    await save_record_book_number(message.from_user.id, number)
+    await save_record_book_number(
+        message.from_user.id, 
+        number, 
+        username=message.from_user.username, 
+        first_name=message.from_user.first_name
+    )
     await state.clear()
     await show_results_view(message, message.from_user.id, number)
 
