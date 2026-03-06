@@ -79,9 +79,16 @@ def format_results(data: list, settings: dict, rating_info: dict | None = None) 
     output.append(f"Долгов: {debts}")
     
     # Место в рейтинге (если данные доступны)
-    if rating_info and rating_info.get("position"):
-        pos, total = rating_info["position"]
-        output.append(f"📍 Место в группе: {pos} из {total}")
+    if rating_info:
+        if "cluster_pos" in rating_info:
+            pos, total = rating_info["cluster_pos"]
+            output.append(f"📍 Место в группе: {pos} из {total}")
+        if "year_pos" in rating_info:
+            pos, total = rating_info["year_pos"]
+            output.append(f"📍 Место за свой год: {pos} из {total}")
+        if "all_pos" in rating_info:
+            pos, total = rating_info["all_pos"]
+            output.append(f"📍 Место за все года: {pos} из {total}")
     
     output.append("")
     
@@ -130,10 +137,21 @@ async def show_results_view(target: Message | CallbackQuery, user_id: int, recor
         await msg.edit_text(text, reply_markup=get_session_results_keyboard())
     else:
         # Получаем рейтинговую информацию (если доступна)
-        rating_info = None
+        rating_info = {}
         cluster_pos = await get_rating_position(record_book_number, "cluster")
         if cluster_pos:
-            rating_info = {"position": cluster_pos}
+            rating_info["cluster_pos"] = cluster_pos
+            
+        year_pos = await get_rating_position(record_book_number, "year")
+        if year_pos:
+            rating_info["year_pos"] = year_pos
+            
+        all_pos = await get_rating_position(record_book_number, "all")
+        if all_pos:
+            rating_info["all_pos"] = all_pos
+            
+        if not rating_info:
+            rating_info = None
         
         formatted_text = format_results(results_data, settings, rating_info)
         if len(formatted_text) > 4000:

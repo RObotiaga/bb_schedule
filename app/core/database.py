@@ -754,3 +754,44 @@ async def get_cluster_students_subjects(cluster_id: int) -> List[dict]:
     ) as cursor:
         rows = await cursor.fetchall()
         return [{"record_book": r[0], "subjects_json": r[1]} for r in rows]
+
+# --- Рейтинг по предметам ---
+
+async def get_subjects_with_stats() -> List[str]:
+    """Возвращает список всех предметов, по которым есть статистика."""
+    db = await get_db_connection()
+    async with db.execute(
+        "SELECT DISTINCT subject FROM teacher_stats WHERE total_students > 0 ORDER BY subject"
+    ) as cursor:
+        rows = await cursor.fetchall()
+        return [r[0] for r in rows]
+
+
+async def get_subject_rating(subject: str) -> List[dict]:
+    """Рейтинг преподавателей по конкретному предмету."""
+    db = await get_db_connection()
+    async with db.execute("""
+        SELECT teacher, SUM(total_students), SUM(passed_students),
+        ROUND(CAST(SUM(passed_students) AS FLOAT) / SUM(total_students) * 100, 1) as rate
+        FROM teacher_stats
+        WHERE subject = ?
+        GROUP BY teacher
+        HAVING SUM(total_students) > 0
+        ORDER BY rate DESC, SUM(total_students) DESC
+    """, (subject,)) as cursor:
+        rows = await cursor.fetchall()
+        return [
+            {"teacher": r[0], "total": r[1], "passed": r[2], "pass_rate": r[3]}
+            for r in rows
+        ]
+
+
+async def get_teacher_subject_rank(teacher: str, subject: str) -> tuple[int, int] | None:
+    """Возвращает место преподавателя в рейтинге по предмету (место, всего преподавателей)."""
+    rating = await get_subject_rating(subject)
+    if not rating:
+        return None
+    for i, entry in enumerate(rating, start=1):
+        if entry["teacher"] == teacher:
+            return i, len(rating)
+    return None

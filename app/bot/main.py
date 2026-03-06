@@ -9,7 +9,7 @@ from app.core.config import TELEGRAM_BOT_TOKEN
 from app.core.state import GlobalState
 from app.core.database import initialize_database
 from app.services.schedule_sync import run_full_sync
-from app.bot.handlers import common, schedule, teachers, session, admin, rating
+from app.bot.handlers import common, schedule, teachers, session, admin, rating, subject_rating
 
 async def periodic_update(bot: Bot):
     logging.info("⏳ Запуск периодического обновления расписания...")
@@ -49,6 +49,7 @@ def create_dispatcher() -> Dispatcher:
     dp.include_router(teachers.router)
     dp.include_router(session.router)
     dp.include_router(rating.router)
+    dp.include_router(subject_rating.router)
     return dp
 
 async def start_bot():
@@ -79,6 +80,7 @@ async def start_bot():
     commands = [
         BotCommand(command="start", description="Перезапустить бота"),
         BotCommand(command="top", description="Рейтинг успеваемости"),
+        BotCommand(command="top_subjects", description="Рейтинг преподавателей по предметам"),
     ]
     await bot.set_my_commands(commands)
     

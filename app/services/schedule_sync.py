@@ -321,6 +321,7 @@ class ScheduleProcessor:
             
         subject = lines[0]
         teacher = "Не указан"
+        location = "Не указана"
         location_parts = []
         
         if len(lines) > 1:

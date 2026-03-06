@@ -156,3 +156,30 @@ def get_settings_keyboard(settings: dict):
     
     builder.row(InlineKeyboardButton(text="⬅️ Назад к результатам", callback_data="back_to_results"))
     return builder.as_markup()
+
+def get_subjects_keyboard(subjects: list, page: int = 0, per_page: int = 10):
+    builder = InlineKeyboardBuilder()
+    start_idx = page * per_page
+    end_idx = start_idx + per_page
+    
+    current_subjects = subjects[start_idx:end_idx]
+    
+    for i, subj in enumerate(current_subjects):
+        actual_idx = start_idx + i
+        # limit button text length just in case
+        display_text = subj[:40] + "..." if len(subj) > 40 else subj
+        builder.button(text=display_text, callback_data=f"subj_select:{actual_idx}")
+        
+    builder.adjust(1)
+    
+    nav_buttons = []
+    if page > 0:
+        nav_buttons.append(InlineKeyboardButton(text="⬅️ Назад", callback_data=f"subj_page:{page - 1}"))
+    if end_idx < len(subjects):
+        nav_buttons.append(InlineKeyboardButton(text="Вперед ➡️", callback_data=f"subj_page:{page + 1}"))
+        
+    if nav_buttons:
+        builder.row(*nav_buttons)
+        
+    return builder.as_markup()
+

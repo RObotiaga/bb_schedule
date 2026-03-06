@@ -9,6 +9,7 @@ from app.core.database import (
     get_schedule_by_teacher, is_subscribed_to_teacher,
     subscribe_teacher, unsubscribe_teacher,
     get_teacher_stats, get_teacher_overall_pass_rate,
+    get_teacher_subject_rank
 )
 from app.bot.keyboards import get_teacher_nav_keyboard, get_teacher_choices_keyboard, get_faculties_keyboard
 from app.core.state import GlobalState
@@ -202,9 +203,23 @@ async def process_teacher_stats(callback: CallbackQuery, state: FSMContext):
     lines = [f"📊 *Статистика: {teacher}*\n"]
 
     for entry in stats:
+        subject = entry["subject"]
         emoji = "✅" if entry["pass_rate"] >= 70 else ("⚠️" if entry["pass_rate"] >= 50 else "🔴")
+        
+        rank_info = ""
+        rank_data = await get_teacher_subject_rank(teacher, subject)
+        if rank_data:
+            pos, total_teachers = rank_data
+            if total_teachers > 1:
+                if pos == 1:
+                    rank_info = f" [🏆 1 место из {total_teachers}]"
+                elif pos <= 3:
+                    rank_info = f" [🏅 {pos} место из {total_teachers}]"
+                else:
+                    rank_info = f" [{pos} место из {total_teachers}]"
+
         lines.append(
-            f"{emoji} {entry['subject']} ({entry['group_name']}):\n"
+            f"{emoji} {subject} ({entry['group_name']}){rank_info}:\n"
             f"   Сдали: {entry['passed']}/{entry['total']} ({entry['pass_rate']}%)"
         )
 
