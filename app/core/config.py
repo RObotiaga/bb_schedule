@@ -20,6 +20,27 @@ DATA_DIR = os.path.join(BASE_DIR, "data")
 DB_PATH = os.path.join(DATA_DIR, "schedule.db")
 DOWNLOAD_DIR = os.path.join(DATA_DIR, "schedules")
 
+# Настройки парсинга рейтинга
+_parsing_years_str = config("PARSING_YEARS", default="")
+if _parsing_years_str:
+    PARSING_YEARS = [int(y.strip()) for y in _parsing_years_str.split(",") if y.strip().isdigit()]
+else:
+    # Автоматический расчет: последние 6 лет
+    from datetime import datetime
+    now = datetime.now()
+    if now.month < 7:
+        # Первая половина года: от (тек_год - 6) до (тек_год - 1)
+        PARSING_YEARS = list(range(now.year - 6, now.year))
+    else:
+        # Вторая половина года: от (тек_год - 5) до тек_год
+        PARSING_YEARS = list(range(now.year - 5, now.year + 1))
+
+MAX_CONSECUTIVE_NOT_FOUND = config("MAX_CONSECUTIVE_NOT_FOUND", default=20, cast=int)
+RATING_PARSER_WORKERS = config("RATING_PARSER_WORKERS", default=3, cast=int)
+DATA_DIR = os.path.join(BASE_DIR, "data")
+DB_PATH = os.path.join(DATA_DIR, "schedule.db")
+DOWNLOAD_DIR = os.path.join(DATA_DIR, "schedules")
+
 # Создаем директории если их нет
 if not os.path.exists(DATA_DIR):
     os.makedirs(DATA_DIR, exist_ok=True)

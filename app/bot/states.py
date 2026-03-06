@@ -15,3 +15,6 @@ class NoteEdit(StatesGroup):
 
 class ChecklistAdd(StatesGroup):
     waiting_for_item_text = State()
+
+class SubjectSearch(StatesGroup):
+    waiting_for_subject_name = State()

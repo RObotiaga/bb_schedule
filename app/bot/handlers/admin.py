@@ -70,10 +70,10 @@ async def admin_reload_structure(message: Message):
 
 @router.message(IsAdmin(), F.text == "🏆 Обновить рейтинг")
 async def admin_update_rating(message: Message):
-    await message.answer("🏆 Запускаю обновление рейтинга (парсинг зачёток + кластеризация)...\n"
+    status_msg = await message.answer("🏆 Запускаю обновление рейтинга (парсинг зачёток + кластеризация)...\n"
                          "⏳ Это может занять некоторое время.")
     try:
-        await run_rating_update()
+        await run_rating_update(bot=message.bot, status_message=status_msg)
         await message.answer("✅ Рейтинг успешно обновлён!", reply_markup=admin_keyboard)
     except Exception as e:
         logging.exception("Ошибка при обновлении рейтинга")

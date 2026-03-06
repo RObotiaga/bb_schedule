@@ -181,5 +181,7 @@ def get_subjects_keyboard(subjects: list, page: int = 0, per_page: int = 10):
     if nav_buttons:
         builder.row(*nav_buttons)
         
+    builder.row(InlineKeyboardButton(text="🔍 Поиск предмета", callback_data="subj_search_start"))
+        
     return builder.as_markup()
 

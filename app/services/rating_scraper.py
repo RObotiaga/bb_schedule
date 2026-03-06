@@ -214,54 +214,93 @@ async def scrape_record_book(
 async def scrape_all_records(
     year: int = 2022,
     start: int = 1,
-    end: int = 1523,
+    max_consecutive_not_found: int = 20,
     delay_range: tuple = (2, 8),
     on_result=None,
+    on_progress=None,
 ) -> dict:
     """
     Массовый парсинг зачёток за указанный год.
     
     Args:
         year: Год зачисления (префикс номера).
-        start/end: Диапазон порядковых номеров.
+        start: Начальный порядковый номер.
+        max_consecutive_not_found: Количество идущих подряд несуществующих зачеток для остановки парсинга года.
         delay_range: Мин/макс задержка между запросами (сек) для антифрода.
         on_result: Async callback(record_book, status, data) — вызывается после каждой зачётки.
+        on_progress: Async callback(current, total) — вызывается каждые 50 записей (total может быть None).
     
     Returns: Статистика {total, success, not_found, error}.
     """
+    from app.core.config import RATING_PARSER_WORKERS
     stats = {"total": 0, "success": 0, "not_found": 0, "error": 0}
-    timeout = aiohttp.ClientTimeout(total=15)
-    connector = aiohttp.TCPConnector(force_close=True)
+    timeout = aiohttp.ClientTimeout(total=20) # Чуть больше для параллельности
+    connector = aiohttp.TCPConnector(limit=RATING_PARSER_WORKERS + 1, force_close=True)
     headers = {
-        "User-Agent": random.choice(USER_AGENTS),
         "Accept": "text/html,application/xhtml+xml",
         "Accept-Language": "ru-RU,ru;q=0.9",
     }
+    
+    consecutive_not_found = 0
+    current_num = start
+    stop_event = asyncio.Event()
+    semaphore = asyncio.Semaphore(RATING_PARSER_WORKERS)
+    
+    async def worker():
+        nonlocal current_num, consecutive_not_found
+        
+        async with aiohttp.ClientSession(timeout=timeout, connector=connector, headers=headers) as session:
+            while not stop_event.is_set():
+                async with semaphore:
+                    if stop_event.is_set():
+                        break
+                        
+                    num = current_num
+                    current_num += 1
+                    record_book = f"{year}{num:04d}"
+                    
+                    # Ротация User-Agent
+                    session.headers["User-Agent"] = random.choice(USER_AGENTS)
+                
+                status, data = await scrape_record_book(session, record_book)
+                
+                # Синхронное обновление статистики
+                stats["total"] += 1
+                stats[status.lower()] += 1
+                
+                if status == "SUCCESS":
+                    consecutive_not_found = 0
+                elif status == "NOT_FOUND":
+                    # Считаем пропуски только «с конца» (грубо, но для остановки годится)
+                    # Если мы нашли кого-то после пропуска, счетчик сбросится выше
+                    consecutive_not_found += 1
+                
+                if on_result:
+                    await on_result(record_book, status, data)
+                
+                actual_processed = stats["total"]
+                absolute_progress = (start - 1) + actual_processed
+                
+                if on_progress:
+                    await on_progress(absolute_progress, None)
 
-    async with aiohttp.ClientSession(timeout=timeout, connector=connector, headers=headers) as session:
-        for num in range(start, end + 1):
-            record_book = f"{year}{num:04d}"
-            # Ротация User-Agent каждые ~10 запросов
-            if num % 10 == 0:
-                ua = random.choice(USER_AGENTS)
-                session.headers.update({"User-Agent": ua})
+                if actual_processed % 10 == 0:
+                    logging.info(
+                        f"Прогресс парсинга ({year}): {absolute_progress} "
+                        f"(✅ {stats['success']}, ❌ {stats['error']}, 🔍 {stats['not_found']})"
+                    )
 
-            status, data = await scrape_record_book(session, record_book)
-            stats["total"] += 1
-            stats[status.lower()] += 1
+                if consecutive_not_found >= max_consecutive_not_found:
+                    logging.info(f"Достигнут предел пропусков для {year} года. Завершаем.")
+                    stop_event.set()
+                    break
 
-            if on_result:
-                await on_result(record_book, status, data)
+                # Небольшая задержка перед следующим запросом в этом воркере
+                await asyncio.sleep(random.uniform(*delay_range))
 
-            if stats["total"] % 50 == 0:
-                logging.info(
-                    f"Прогресс парсинга: {stats['total']}/{end - start + 1} "
-                    f"(✅ {stats['success']}, ❌ {stats['error']}, 🔍 {stats['not_found']})"
-                )
+    # Запускаем группу воркеров
+    workers = [worker() for _ in range(RATING_PARSER_WORKERS)]
+    await asyncio.gather(*workers)
 
-            # Антифрод: рандомная задержка
-            delay = random.uniform(*delay_range)
-            await asyncio.sleep(delay)
-
-    logging.info(f"Парсинг завершён: {stats}")
+    logging.info(f"Парсинг {year} года завершён: {stats}")
     return stats

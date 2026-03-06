@@ -7,6 +7,8 @@ from aiogram.types import InlineKeyboardButton
 
 from app.core.database import get_subjects_with_stats, get_subject_rating
 from app.bot.keyboards import get_subjects_keyboard
+from app.bot.states import SubjectSearch
+from aiogram.types import InlineKeyboardMarkup
 
 router = Router()
 
@@ -47,6 +49,59 @@ async def process_subj_page(callback: CallbackQuery, state: FSMContext):
     except Exception:
         pass
     await callback.answer()
+
+@router.callback_query(F.data == "subj_search_start")
+async def start_subject_search(callback: CallbackQuery, state: FSMContext):
+    await callback.message.edit_text(
+        "🔍 <b>Введите название предмета (или часть названия) для поиска:</b>",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="Отмена", callback_data="subj_page:0")]
+        ]),
+        parse_mode="HTML"
+    )
+    await state.set_state(SubjectSearch.waiting_for_subject_name)
+    await callback.answer()
+
+@router.message(SubjectSearch.waiting_for_subject_name)
+async def process_subject_search(message: Message, state: FSMContext):
+    query = message.text.lower()
+    data = await state.get_data()
+    subjects = data.get("cached_subjects")
+    
+    if not subjects:
+        subjects = await get_subjects_with_stats()
+        await state.update_data(cached_subjects=subjects)
+        
+    matches = []
+    for i, s in enumerate(subjects):
+        if query in s.lower():
+            matches.append((i, s))
+            
+    if not matches:
+        await message.answer(
+            "❌ Предметы по вашему запросу не найдены. Попробуйте другой запрос или вернитесь к списку.",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="⬅️ К полному списку", callback_data="subj_page:0")]
+            ])
+        )
+        return
+        
+    builder = InlineKeyboardBuilder()
+    for i, subj in matches[:50]: # Ограничиваем до 50 результатов
+        display_text = subj[:40] + "..." if len(subj) > 40 else subj
+        builder.button(text=display_text, callback_data=f"subj_select:{i}")
+    
+    builder.adjust(1)
+    builder.row(InlineKeyboardButton(text="⬅️ К полному списку", callback_data="subj_page:0"))
+    
+    await message.answer(
+        f"🔍 <b>Результаты поиска по запросу «{message.text}»:</b>\n" + 
+        ("<i>Показаны первые 50 совпадений</i>" if len(matches) > 50 else ""), 
+        reply_markup=builder.as_markup(), 
+        parse_mode="HTML"
+    )
+    await state.set_state(None)
+
 
 
 @router.callback_query(F.data.startswith("subj_select:"))

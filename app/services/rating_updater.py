@@ -2,9 +2,12 @@
 Фоновая задача: массовый парсинг зачёток и обновление рейтинга.
 Запускается раз в сутки через scheduler.
 """
+import asyncio
 import json
 import logging
+import random
 import re
+import time
 from datetime import datetime
 
 from app.core.database import save_rating_record, save_job_log, cleanup_old_job_logs
@@ -57,15 +60,16 @@ async def _on_record_parsed(record_book: str, status: str, data: list | None):
     )
 
 
-async def run_rating_update(bot=None):
+async def run_rating_update(bot=None, status_message=None):
     """
     Полный цикл обновления рейтинга:
-    1. Парсинг всех зачёток 2022 года
+    1. Парсинг всех зачёток за указанные года
     2. Кластеризация
     3. Маппинг кластеров на группы расписания
     4. Расчёт статистики преподавателей
     """
-    from app.core.config import ADMIN_ID
+    from app.core.database import save_rating_record, save_job_log, cleanup_old_job_logs, get_last_parsed_num, get_records_count_by_year
+    from app.core.config import ADMIN_ID, PARSING_YEARS, MAX_CONSECUTIVE_NOT_FOUND
     start_time = datetime.now()
     logging.info(f"🏆 Начало обновления рейтинга: {start_time}...")
     
@@ -73,20 +77,115 @@ async def run_rating_update(bot=None):
     status = "ERROR"
 
     try:
-        # Шаг 1: Массовый парсинг
-        stats = await scrape_all_records(
-            year=2022,
-            start=1,
-            end=1523,
-            delay_range=(2, 8),
-            on_result=_on_record_parsed,
-        )
-        logging.info(f"📊 Парсинг завершён: {stats}")
+        total_years = len(PARSING_YEARS)
         
-        details.update(stats)
+        # Предварительная оценка общего объема работ
+        estimated_total_all = 0
+        for y in PARSING_YEARS:
+            estimated_total_all += await get_records_count_by_year(y)
+        
+        start_timestamp = time.time()
+        total_processed_in_session = 0
+        
+        def make_progress_callback(current_year: int, year_idx: int, estimated_total_year: int):
+            async def _on_progress(current_absolute_in_year: int, total_in_session_override: int | None):
+                nonlocal total_processed_in_session
+                if bot and status_message:
+                    # Базовый процент для уже пройденных лет
+                    base_percent = (year_idx / total_years) * 100
+                    
+                    # Добавляем прогресс внутри текущего года
+                    year_weight = 100 / total_years
+                    inner_progress = 0
+                    if estimated_total_year > 0:
+                        # Используем current_absolute_in_year (который уже с учетом start)
+                        # Но нам нужно именно то, что пройдено в ЭТОМ году относительно оценки
+                        # Предположим, что current_absolute_in_year — это реальный порядковый номер студента
+                        inner_progress = min(current_absolute_in_year / (estimated_total_year or 1), 0.99)
+                    
+                    overall_percent = base_percent + (inner_progress * year_weight)
+                    
+                    # Расчет ETA
+                    elapsed = time.time() - start_timestamp
+                    total_processed_in_session += 1 # Грубая прибавка при каждом вызове
+                    
+                    eta_str = "считаю..."
+                    if elapsed > 10 and total_processed_in_session > 5:
+                        speed = total_processed_in_session / elapsed # студентов в сек
+                        # Нам нужно понять, сколько ЕЩЕ осталось. 
+                        # Примерно: (оценка_всего - то_что_уже_прошли_суммарно)
+                        # То, что прошли суммарно = (прошлые годы) + (текущий год)
+                        # Для простоты: возьмем оставшийся процент
+                        percent_left = max(0, 100 - overall_percent)
+                        if overall_percent > 0:
+                            remaining_sec = (elapsed / overall_percent) * percent_left
+                            if remaining_sec > 60:
+                                eta_str = f"~{int(remaining_sec / 60)} мин"
+                            else:
+                                eta_str = f"~{int(remaining_sec)} сек"
 
-        # Шаг 2: Кластеризация и определение отчисленных
-        await run_clustering(enrollment_year=2022)
+                    # Индикатор активности
+                    dot = "•" if total_processed_in_session % 2 == 0 else "◦"
+                    
+                    try:
+                        await bot.edit_message_text(
+                            f"🏆 Обновление рейтинга (парсинг зачёток + кластеризация)...\n"
+                            f"📊 Общий прогресс: {overall_percent:.1f}%\n"
+                            f"📁 Год: {current_year} (найдено {current_absolute_in_year}) {dot}\n"
+                            f"⏳ Осталось: {eta_str}",
+                            chat_id=status_message.chat.id,
+                            message_id=status_message.message_id
+                        )
+                    except Exception as e:
+                        if "message is not modified" not in str(e):
+                            logging.error(f"Failed to edit progress message: {e}")
+            return _on_progress
+
+        aggregated_stats = {"total": 0, "success": 0, "not_found": 0, "error": 0}
+
+        # Шаг 1 & 2: Массовый парсинг и кластеризация для каждого года
+        for i, year in enumerate(PARSING_YEARS):
+            logging.info(f"Начинаем проверку года {year}...")
+            
+            # Получаем оценку общего количества для прогресс-бара
+            estimated_total_year = await get_records_count_by_year(year)
+            
+            # Проверяем, можно ли продолжить парсинг
+            last_parsed = await get_last_parsed_num(year)
+            start_num = last_parsed + 1
+            if start_num > 1:
+                logging.info(f"♻️ Возобновляем парсинг {year} года с номера {start_num:04d} (последний был {last_parsed:04d} за последние 24ч)")
+
+            stats = await scrape_all_records(
+                year=year,
+                start=start_num,
+                max_consecutive_not_found=MAX_CONSECUTIVE_NOT_FOUND,
+                delay_range=(2, 8),
+                on_result=_on_record_parsed,
+                on_progress=make_progress_callback(year, i, estimated_total_year),
+            )
+            logging.info(f"📊 Парсинг {year} завершён: {stats}")
+            
+            for k, v in stats.items():
+                if k in aggregated_stats:
+                    aggregated_stats[k] += v
+
+            # Кластеризация и определение отчисленных для года
+            await run_clustering(enrollment_year=year)
+
+        if bot and status_message:
+            try:
+                await bot.edit_message_text(
+                    f"🏆 Обновление рейтинга...\n"
+                    f"✅ Парсинг завершён.\n"
+                    f"⚙️ Выполняется маппинг и расчёт статистики...",
+                    chat_id=status_message.chat.id,
+                    message_id=status_message.message_id
+                )
+            except Exception:
+                pass
+
+        details.update(aggregated_stats)
 
         # Шаг 3: Маппинг кластеров на группы расписания
         await map_clusters_to_groups()
@@ -103,10 +202,19 @@ async def run_rating_update(bot=None):
             try:
                 msg = (
                     "✅ *Автоматическое обновление рейтинга*\n\n"
-                    f"Данные успешно спаршены ({stats.get('processed', 0)} зачеток). "
+                    f"Данные успешно спаршены ({aggregated_stats.get('total', 0)} запросов, "
+                    f"успешно: {aggregated_stats.get('success', 0)}). "
                     "Кластеры и статистика преподавателей обновлены."
                 )
-                await bot.send_message(ADMIN_ID, msg, parse_mode="Markdown")
+                if status_message:
+                    await bot.edit_message_text(
+                        msg,
+                        chat_id=status_message.chat.id,
+                        message_id=status_message.message_id,
+                        parse_mode="Markdown"
+                    )
+                else:
+                    await bot.send_message(ADMIN_ID, msg, parse_mode="Markdown")
             except Exception as e:
                 logging.error(f"Не удалось отправить уведомление об успехе рейтинга: {e}")
         

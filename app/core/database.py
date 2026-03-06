@@ -795,3 +795,32 @@ async def get_teacher_subject_rank(teacher: str, subject: str) -> tuple[int, int
         if entry["teacher"] == teacher:
             return i, len(rating)
     return None
+
+async def get_last_parsed_num(enrollment_year: int, max_hours: int = 24) -> int:
+    """
+    Находит максимальный порядковый номер зачетки для года, 
+    если записи обновлялись не позднее max_hours назад.
+    """
+    db = await get_db_connection()
+    # SQL query to get the max record number suffix where last_updated is fresh
+    # record_book format is YYYYNNNN (e.g. 20220150)
+    query = """
+        SELECT MAX(CAST(SUBSTR(record_book, 5) AS INTEGER))
+        FROM rating_data
+        WHERE enrollment_year = ? 
+          AND last_updated >= datetime('now', ?)
+    """
+    async with db.execute(query, (enrollment_year, f"-{max_hours} hours")) as cursor:
+        row = await cursor.fetchone()
+        return row[0] if row and row[0] is not None else 0
+
+async def get_records_count_by_year(enrollment_year: int) -> int:
+    """
+    Возвращает количество записей рейтинга для указанного года зачисления.
+    Используется для оценки общего количества при парсинге.
+    """
+    db = await get_db_connection()
+    query = "SELECT COUNT(*) FROM rating_data WHERE enrollment_year = ?"
+    async with db.execute(query, (enrollment_year,)) as cursor:
+        row = await cursor.fetchone()
+        return row[0] if row else 0
