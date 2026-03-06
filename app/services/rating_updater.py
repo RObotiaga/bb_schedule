@@ -57,7 +57,7 @@ async def _on_record_parsed(record_book: str, status: str, data: list | None):
     )
 
 
-async def run_rating_update():
+async def run_rating_update(bot=None):
     """
     Полный цикл обновления рейтинга:
     1. Парсинг всех зачёток 2022 года
@@ -65,6 +65,7 @@ async def run_rating_update():
     3. Маппинг кластеров на группы расписания
     4. Расчёт статистики преподавателей
     """
+    from app.core.config import ADMIN_ID
     start_time = datetime.now()
     logging.info(f"🏆 Начало обновления рейтинга: {start_time}...")
     
@@ -98,10 +99,31 @@ async def run_rating_update():
         status = "SUCCESS"
         logging.info("✅ Обновление рейтинга завершено")
         
+        if ADMIN_ID and bot:
+            try:
+                msg = (
+                    "✅ *Автоматическое обновление рейтинга*\n\n"
+                    f"Данные успешно спаршены ({stats.get('processed', 0)} зачеток). "
+                    "Кластеры и статистика преподавателей обновлены."
+                )
+                await bot.send_message(ADMIN_ID, msg, parse_mode="Markdown")
+            except Exception as e:
+                logging.error(f"Не удалось отправить уведомление об успехе рейтинга: {e}")
+        
     except Exception as e:
         status = "ERROR"
         details["error"] = str(e)
         logging.exception("Ошибка при обновлении рейтинга")
+        
+        if ADMIN_ID and bot:
+            try:
+                await bot.send_message(
+                    ADMIN_ID, 
+                    "❌ *Ошибка авто-обновления рейтинга*\n\nПроизошла ошибка при фоновом обновлении и расчете статистики. Проверьте логи.", 
+                    parse_mode="Markdown"
+                )
+            except Exception as e_msg:
+                logging.error(f"Не удалось отправить уведомление об ошибке рейтинга: {e_msg}")
         
     finally:
         end_time = datetime.now()

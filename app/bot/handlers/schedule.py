@@ -51,10 +51,20 @@ async def show_schedule(target: Message | CallbackQuery, group: str, day_offset:
             lesson_dict['is_subscription'] = True
             all_lessons.append(lesson_dict)
             
-    # Sort all lessons by time
-    all_lessons.sort(key=lambda x: x['time'])
+    # Deduplicate lessons based on time, subject, teacher, location
+    # Prioritizes marking existing lessons as subscriptions
+    unique_lessons = {}
+    for lesson in all_lessons:
+        key = (lesson['time'], lesson['subject'], lesson['teacher'], lesson['location'])
+        if key not in unique_lessons or lesson.get('is_subscription'):
+            unique_lessons[key] = lesson
+            
+    final_lessons = list(unique_lessons.values())
     
-    text = format_schedule_message(group, target_date, all_lessons)
+    # Sort all lessons by time
+    final_lessons.sort(key=lambda x: x['time'])
+    
+    text = format_schedule_message(group, target_date, final_lessons)
     
     if isinstance(target, Message):
         await target.answer(text, parse_mode="Markdown")
