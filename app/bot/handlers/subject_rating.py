@@ -126,9 +126,9 @@ async def process_subj_select(callback: CallbackQuery, state: FSMContext):
         await callback.answer("📭 Данных по этому предмету нет.", show_alert=True)
         return
         
-    passed = stats["passed"]
-    total = stats["total"]
-    rate = stats["pass_rate"]
+    passed = stats["passed_persons"]
+    total = stats["total_persons"]
+    rate = stats["person_pass_rate"]
     debts = total - passed
     
     text = (

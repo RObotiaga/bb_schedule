@@ -154,7 +154,10 @@ async def initialize_database():
             subject TEXT PRIMARY KEY,
             total_students INTEGER DEFAULT 0,
             passed_students INTEGER DEFAULT 0,
-            pass_rate REAL DEFAULT 0.0
+            pass_rate REAL DEFAULT 0.0,
+            total_persons INTEGER DEFAULT 0,
+            passed_persons INTEGER DEFAULT 0,
+            person_pass_rate REAL DEFAULT 0.0
         )
     """)
     await db.execute("""
@@ -164,9 +167,27 @@ async def initialize_database():
             total_students INTEGER DEFAULT 0,
             passed_students INTEGER DEFAULT 0,
             pass_rate REAL DEFAULT 0.0,
+            total_persons INTEGER DEFAULT 0,
+            passed_persons INTEGER DEFAULT 0,
+            person_pass_rate REAL DEFAULT 0.0,
             PRIMARY KEY (cluster_id, subject)
         )
     """)
+
+    # Миграции для новых колонок (persons)
+    for table in ["subject_global_stats", "cluster_subject_stats"]:
+        for col in ["total_persons", "passed_persons"]:
+            try:
+                await db.execute(f"ALTER TABLE {table} ADD COLUMN {col} INTEGER DEFAULT 0")
+                await db.commit()
+            except aiosqlite.OperationalError:
+                pass
+        try:
+            await db.execute(f"ALTER TABLE {table} ADD COLUMN person_pass_rate REAL DEFAULT 0.0")
+            await db.commit()
+        except aiosqlite.OperationalError:
+            pass
+
 
     # Таблица для логирования фоновых задач (статусы бота)
     await db.execute("""
@@ -562,16 +583,16 @@ async def get_all_rating_records(enrollment_year: int = None) -> List[dict]:
     """Все записи рейтинга (для кластеризации)."""
     db = await get_db_connection()
     if enrollment_year:
-        query = "SELECT record_book, subjects_json, total_subjects, last_academic_year, cluster_id FROM rating_data WHERE enrollment_year = ?"
+        query = "SELECT record_book, subjects_json, total_subjects, last_academic_year, cluster_id, is_expelled FROM rating_data WHERE enrollment_year = ?"
         params = (enrollment_year,)
     else:
-        query = "SELECT record_book, subjects_json, total_subjects, last_academic_year, cluster_id FROM rating_data"
+        query = "SELECT record_book, subjects_json, total_subjects, last_academic_year, cluster_id, is_expelled FROM rating_data"
         params = ()
 
     async with db.execute(query, params) as cursor:
         rows = await cursor.fetchall()
         return [
-            {"record_book": r[0], "subjects_json": r[1], "total_subjects": r[2], "last_academic_year": r[3], "cluster_id": r[4]}
+            {"record_book": r[0], "subjects_json": r[1], "total_subjects": r[2], "last_academic_year": r[3], "cluster_id": r[4], "is_expelled": r[5]}
             for r in rows
         ]
 
@@ -689,30 +710,40 @@ async def clear_subject_global_stats():
     await db.execute("DELETE FROM cluster_subject_stats")
     await db.commit()
 
-async def save_subject_global_stat(subject: str, total: int, passed: int, pass_rate: float):
-    """Сохраняет глобальную статистику по конкретному предмету."""
+async def save_subject_global_stat(subject: str, total: int, passed: int, pass_rate: float, 
+                                  total_persons: int = 0, passed_persons: int = 0, person_pass_rate: float = 0.0):
+    """Сохраняет глобальную статистику по конкретному предмету (включая количество людей)."""
     db = await get_db_connection()
     await db.execute("""
-        INSERT INTO subject_global_stats (subject, total_students, passed_students, pass_rate)
-        VALUES (?, ?, ?, ?)
+        INSERT INTO subject_global_stats (subject, total_students, passed_students, pass_rate,
+                                          total_persons, passed_persons, person_pass_rate)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(subject) DO UPDATE SET
             total_students=excluded.total_students,
             passed_students=excluded.passed_students,
-            pass_rate=excluded.pass_rate
-    """, (subject, total, passed, pass_rate))
+            pass_rate=excluded.pass_rate,
+            total_persons=excluded.total_persons,
+            passed_persons=excluded.passed_persons,
+            person_pass_rate=excluded.person_pass_rate
+    """, (subject, total, passed, pass_rate, total_persons, passed_persons, person_pass_rate))
     await db.commit()
 
-async def save_cluster_subject_stat(cluster_id: int, subject: str, total: int, passed: int, pass_rate: float):
-    """Сохраняет статистику предмета внутри кластера."""
+async def save_cluster_subject_stat(cluster_id: int, subject: str, total: int, passed: int, pass_rate: float,
+                                    total_persons: int = 0, passed_persons: int = 0, person_pass_rate: float = 0.0):
+    """Сохраняет статистику предмета внутри кластера (включая количество людей)."""
     db = await get_db_connection()
     await db.execute("""
-        INSERT INTO cluster_subject_stats (cluster_id, subject, total_students, passed_students, pass_rate)
-        VALUES (?, ?, ?, ?, ?)
+        INSERT INTO cluster_subject_stats (cluster_id, subject, total_students, passed_students, pass_rate,
+                                           total_persons, passed_persons, person_pass_rate)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(cluster_id, subject) DO UPDATE SET
             total_students=excluded.total_students,
             passed_students=excluded.passed_students,
-            pass_rate=excluded.pass_rate
-    """, (cluster_id, subject, total, passed, pass_rate))
+            pass_rate=excluded.pass_rate,
+            total_persons=excluded.total_persons,
+            passed_persons=excluded.passed_persons,
+            person_pass_rate=excluded.person_pass_rate
+    """, (cluster_id, subject, total, passed, pass_rate, total_persons, passed_persons, person_pass_rate))
     await db.commit()
 
 async def get_cluster_subject_stats(cluster_id: int) -> dict:
@@ -740,7 +771,7 @@ async def get_global_subject_stats(subject: str) -> dict | None:
     """Глобальная статистика по одному предмету."""
     db = await get_db_connection()
     async with db.execute(
-        "SELECT total_students, passed_students, pass_rate FROM subject_global_stats WHERE subject = ?",
+        "SELECT total_students, passed_students, pass_rate, total_persons, passed_persons, person_pass_rate FROM subject_global_stats WHERE subject = ?",
         (subject,)
     ) as cursor:
         row = await cursor.fetchone()
@@ -749,7 +780,10 @@ async def get_global_subject_stats(subject: str) -> dict | None:
         return {
             "total": row[0],
             "passed": row[1],
-            "pass_rate": row[2]
+            "pass_rate": row[2],
+            "total_persons": row[3],
+            "passed_persons": row[4],
+            "person_pass_rate": row[5]
         }
 
 async def get_teacher_subject_rank(teacher: str, subject: str) -> tuple[int, int] | None:

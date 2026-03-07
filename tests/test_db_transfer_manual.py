@@ -6,15 +6,27 @@ import sys
 # Add project root to path
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-from app.core.database import get_db_connection, initialize_database
+from app.core.database import initialize_database
 from app.services.db_transfer import export_rating_data, import_rating_data
+import app.core.database as db_module
+import aiosqlite
 
 async def test_db_transfer():
     print("Testing DB Transfer...")
+    
+    # 0. Monkeypatch get_db_connection to use an in-memory database
+    mem_db = await aiosqlite.connect(":memory:")
+    mem_db.row_factory = aiosqlite.Row
+    
+    async def get_test_db():
+        return mem_db
+    
+    db_module.get_db_connection = get_test_db
+    
     await initialize_database()
-    db = await get_db_connection()
+    db = await db_module.get_db_connection()
 
-    # 1. Clean up first
+    # 1. Clean up first (just in case)
     await db.execute("DELETE FROM rating_data")
     await db.execute("DELETE FROM cluster_groups")
     await db.execute("DELETE FROM teacher_stats")

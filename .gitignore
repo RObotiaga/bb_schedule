@@ -14,6 +14,11 @@ htmlcov/
 __pycache__/
 *.pyc
 *.db
+check_*.py
+debug_*.py
+fix_*.py
+query_*.py
+/test_*.py
 
 # Игнорируем логи и временные данные
 fatal_error_screenshot.png
