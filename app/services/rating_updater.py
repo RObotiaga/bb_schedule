@@ -14,7 +14,7 @@ from app.core.database import save_rating_record, save_job_log, cleanup_old_job_
 from app.services.rating_scraper import scrape_all_records
 from app.services.clustering import run_clustering
 from app.services.cluster_mapper import map_clusters_to_groups
-from app.services.teacher_stats import calculate_teacher_stats
+from app.services.subject_stats import calculate_subject_stats
 
 
 def _compute_stats(data: list) -> dict:
@@ -88,8 +88,16 @@ async def run_rating_update(bot=None, status_message=None):
         total_processed_in_session = 0
         
         def make_progress_callback(current_year: int, year_idx: int, estimated_total_year: int):
+            last_update_time = 0
+            
             async def _on_progress(current_absolute_in_year: int, total_in_session_override: int | None):
-                nonlocal total_processed_in_session
+                nonlocal total_processed_in_session, last_update_time
+                
+                # Троттлинг обновлений сообщения (раз в 5 секунд)
+                now = time.time()
+                if now - last_update_time < 5:
+                    return
+
                 if bot and status_message:
                     # Базовый процент для уже пройденных лет
                     base_percent = (year_idx / total_years) * 100
@@ -98,24 +106,17 @@ async def run_rating_update(bot=None, status_message=None):
                     year_weight = 100 / total_years
                     inner_progress = 0
                     if estimated_total_year > 0:
-                        # Используем current_absolute_in_year (который уже с учетом start)
-                        # Но нам нужно именно то, что пройдено в ЭТОМ году относительно оценки
-                        # Предположим, что current_absolute_in_year — это реальный порядковый номер студента
                         inner_progress = min(current_absolute_in_year / (estimated_total_year or 1), 0.99)
                     
                     overall_percent = base_percent + (inner_progress * year_weight)
                     
                     # Расчет ETA
-                    elapsed = time.time() - start_timestamp
+                    elapsed = now - start_timestamp
                     total_processed_in_session += 1 # Грубая прибавка при каждом вызове
                     
                     eta_str = "считаю..."
                     if elapsed > 10 and total_processed_in_session > 5:
-                        speed = total_processed_in_session / elapsed # студентов в сек
-                        # Нам нужно понять, сколько ЕЩЕ осталось. 
-                        # Примерно: (оценка_всего - то_что_уже_прошли_суммарно)
-                        # То, что прошли суммарно = (прошлые годы) + (текущий год)
-                        # Для простоты: возьмем оставшийся процент
+                        speed = total_processed_in_session / elapsed 
                         percent_left = max(0, 100 - overall_percent)
                         if overall_percent > 0:
                             remaining_sec = (elapsed / overall_percent) * percent_left
@@ -125,7 +126,7 @@ async def run_rating_update(bot=None, status_message=None):
                                 eta_str = f"~{int(remaining_sec)} сек"
 
                     # Индикатор активности
-                    dot = "•" if total_processed_in_session % 2 == 0 else "◦"
+                    dot = "•" if int(now) % 2 == 0 else "◦"
                     
                     try:
                         await bot.edit_message_text(
@@ -136,8 +137,12 @@ async def run_rating_update(bot=None, status_message=None):
                             chat_id=status_message.chat.id,
                             message_id=status_message.message_id
                         )
+                        last_update_time = now
                     except Exception as e:
                         if "message is not modified" not in str(e):
+                            if "flood control exceeded" in str(e).lower():
+                                # Если всё равно поймали флуд, увеличиваем задержку
+                                last_update_time = now + 30 
                             logging.error(f"Failed to edit progress message: {e}")
             return _on_progress
 
@@ -191,9 +196,9 @@ async def run_rating_update(bot=None, status_message=None):
         await map_clusters_to_groups()
         logging.info("🗺️ Маппинг кластеров завершён")
 
-        # Шаг 4: Расчёт статистики преподавателей
-        await calculate_teacher_stats()
-        logging.info("📊 Статистика преподавателей рассчитана")
+        # Шаг 4: Расчёт статистики предметов
+        await calculate_subject_stats()
+        logging.info("📊 Статистика предметов рассчитана")
         
         status = "SUCCESS"
         logging.info("✅ Обновление рейтинга завершено")

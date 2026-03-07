@@ -148,20 +148,25 @@ async def initialize_database():
         )
     """)
 
-    # Кэш статистики преподавателей (процент закрываемости)
+    # Статистика закрываемости предметов
     await db.execute("""
-        CREATE TABLE IF NOT EXISTS teacher_stats (
-            teacher TEXT,
+        CREATE TABLE IF NOT EXISTS subject_global_stats (
+            subject TEXT PRIMARY KEY,
+            total_students INTEGER DEFAULT 0,
+            passed_students INTEGER DEFAULT 0,
+            pass_rate REAL DEFAULT 0.0
+        )
+    """)
+    await db.execute("""
+        CREATE TABLE IF NOT EXISTS cluster_subject_stats (
+            cluster_id INTEGER,
             subject TEXT,
-            group_name TEXT,
             total_students INTEGER DEFAULT 0,
             passed_students INTEGER DEFAULT 0,
             pass_rate REAL DEFAULT 0.0,
-            academic_year TEXT,
-            PRIMARY KEY (teacher, subject, group_name, academic_year)
+            PRIMARY KEY (cluster_id, subject)
         )
     """)
-    await db.execute("CREATE INDEX IF NOT EXISTS idx_teacher_stats_teacher ON teacher_stats (teacher)")
 
     # Таблица для логирования фоновых задач (статусы бота)
     await db.execute("""
@@ -557,16 +562,16 @@ async def get_all_rating_records(enrollment_year: int = None) -> List[dict]:
     """Все записи рейтинга (для кластеризации)."""
     db = await get_db_connection()
     if enrollment_year:
-        query = "SELECT record_book, subjects_json, total_subjects, last_academic_year FROM rating_data WHERE enrollment_year = ?"
+        query = "SELECT record_book, subjects_json, total_subjects, last_academic_year, cluster_id FROM rating_data WHERE enrollment_year = ?"
         params = (enrollment_year,)
     else:
-        query = "SELECT record_book, subjects_json, total_subjects, last_academic_year FROM rating_data"
+        query = "SELECT record_book, subjects_json, total_subjects, last_academic_year, cluster_id FROM rating_data"
         params = ()
 
     async with db.execute(query, params) as cursor:
         rows = await cursor.fetchall()
         return [
-            {"record_book": r[0], "subjects_json": r[1], "total_subjects": r[2], "last_academic_year": r[3]}
+            {"record_book": r[0], "subjects_json": r[1], "total_subjects": r[2], "last_academic_year": r[3], "cluster_id": r[4]}
             for r in rows
         ]
 
@@ -634,63 +639,6 @@ async def get_all_cluster_groups() -> List[dict]:
         rows = await cursor.fetchall()
         return [{"cluster_id": r[0], "group_name": r[1], "similarity": r[2]} for r in rows]
 
-
-# --- Статистика преподавателей ---
-
-async def save_teacher_stat(
-    teacher: str, subject: str, group_name: str,
-    total: int, passed: int, pass_rate: float, academic_year: str,
-):
-    """Сохраняет статистику преподавателя по предмету и группе."""
-    db = await get_db_connection()
-    await db.execute("""
-        INSERT INTO teacher_stats (teacher, subject, group_name, total_students, passed_students, pass_rate, academic_year)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
-        ON CONFLICT(teacher, subject, group_name, academic_year) DO UPDATE SET
-            total_students=excluded.total_students,
-            passed_students=excluded.passed_students,
-            pass_rate=excluded.pass_rate
-    """, (teacher, subject, group_name, total, passed, pass_rate, academic_year))
-    await db.commit()
-
-
-async def get_teacher_stats(teacher_name: str) -> List[dict]:
-    """Статистика преподавателя по предметам/группам."""
-    db = await get_db_connection()
-    async with db.execute(
-        "SELECT subject, group_name, total_students, passed_students, pass_rate, academic_year "
-        "FROM teacher_stats WHERE teacher = ? ORDER BY academic_year DESC, subject",
-        (teacher_name,),
-    ) as cursor:
-        rows = await cursor.fetchall()
-        return [
-            {"subject": r[0], "group_name": r[1], "total": r[2],
-             "passed": r[3], "pass_rate": r[4], "year": r[5]}
-            for r in rows
-        ]
-
-
-async def get_teacher_overall_pass_rate(teacher_name: str) -> dict | None:
-    """Агрегированный процент закрываемости преподавателя."""
-    db = await get_db_connection()
-    async with db.execute(
-        "SELECT SUM(total_students), SUM(passed_students) FROM teacher_stats WHERE teacher = ?",
-        (teacher_name,),
-    ) as cursor:
-        row = await cursor.fetchone()
-        if not row or not row[0]:
-            return None
-        total, passed = row[0], row[1]
-        return {"total": total, "passed": passed, "pass_rate": round(passed / total * 100, 1) if total > 0 else 0.0}
-
-
-async def clear_teacher_stats():
-    """Очищает таблицу перед пересчётом."""
-    db = await get_db_connection()
-    await db.execute("DELETE FROM teacher_stats")
-    await db.commit()
-
-
 async def get_cluster_subjects(cluster_id: int) -> set:
     """Возвращает множество предметов для кластера из rating_data."""
     db = await get_db_connection()
@@ -707,7 +655,6 @@ async def get_cluster_subjects(cluster_id: int) -> set:
         except (json.JSONDecodeError, KeyError):
             return set()
 
-
 async def get_all_distinct_clusters() -> List[int]:
     """Все уникальные cluster_id из rating_data."""
     db = await get_db_connection()
@@ -716,7 +663,6 @@ async def get_all_distinct_clusters() -> List[int]:
     ) as cursor:
         rows = await cursor.fetchall()
         return [r[0] for r in rows]
-
 
 async def get_schedule_groups_subjects() -> Dict[str, set]:
     """Возвращает {group_name: {subjects...}} из расписания."""
@@ -734,57 +680,77 @@ async def get_schedule_groups_subjects() -> Dict[str, set]:
         return result
 
 
-async def get_schedule_teacher_subjects() -> List[dict]:
-    """Возвращает уникальные пары (преподаватель, предмет, группа) из расписания."""
-    db = await get_db_connection()
-    async with db.execute(
-        "SELECT DISTINCT teacher, subject, group_name FROM schedule "
-        "WHERE teacher IS NOT NULL AND teacher != 'Не указан'"
-    ) as cursor:
-        rows = await cursor.fetchall()
-        return [{"teacher": r[0], "subject": r[1], "group_name": r[2]} for r in rows]
-
-
-async def get_cluster_students_subjects(cluster_id: int) -> List[dict]:
-    """Все зачётки кластера с их предметами (неотчисленные)."""
-    db = await get_db_connection()
-    async with db.execute(
-        "SELECT record_book, subjects_json FROM rating_data WHERE cluster_id = ? AND is_expelled = 0",
-        (cluster_id,),
-    ) as cursor:
-        rows = await cursor.fetchall()
-        return [{"record_book": r[0], "subjects_json": r[1]} for r in rows]
-
 # --- Рейтинг по предметам ---
+
+async def clear_subject_global_stats():
+    """Очищает таблицы перед пересчётом статистик."""
+    db = await get_db_connection()
+    await db.execute("DELETE FROM subject_global_stats")
+    await db.execute("DELETE FROM cluster_subject_stats")
+    await db.commit()
+
+async def save_subject_global_stat(subject: str, total: int, passed: int, pass_rate: float):
+    """Сохраняет глобальную статистику по конкретному предмету."""
+    db = await get_db_connection()
+    await db.execute("""
+        INSERT INTO subject_global_stats (subject, total_students, passed_students, pass_rate)
+        VALUES (?, ?, ?, ?)
+        ON CONFLICT(subject) DO UPDATE SET
+            total_students=excluded.total_students,
+            passed_students=excluded.passed_students,
+            pass_rate=excluded.pass_rate
+    """, (subject, total, passed, pass_rate))
+    await db.commit()
+
+async def save_cluster_subject_stat(cluster_id: int, subject: str, total: int, passed: int, pass_rate: float):
+    """Сохраняет статистику предмета внутри кластера."""
+    db = await get_db_connection()
+    await db.execute("""
+        INSERT INTO cluster_subject_stats (cluster_id, subject, total_students, passed_students, pass_rate)
+        VALUES (?, ?, ?, ?, ?)
+        ON CONFLICT(cluster_id, subject) DO UPDATE SET
+            total_students=excluded.total_students,
+            passed_students=excluded.passed_students,
+            pass_rate=excluded.pass_rate
+    """, (cluster_id, subject, total, passed, pass_rate))
+    await db.commit()
+
+async def get_cluster_subject_stats(cluster_id: int) -> dict:
+    """Возвращает статистику по предметам для конкретного кластера. Формат: {subject: pass_rate}"""
+    db = await get_db_connection()
+    async with db.execute(
+        "SELECT subject, pass_rate FROM cluster_subject_stats WHERE cluster_id = ?",
+        (cluster_id,)
+    ) as cursor:
+        rows = await cursor.fetchall()
+        return {r[0]: r[1] for r in rows}
+
 
 async def get_subjects_with_stats() -> List[str]:
     """Возвращает список всех предметов, по которым есть статистика."""
     db = await get_db_connection()
     async with db.execute(
-        "SELECT DISTINCT subject FROM teacher_stats WHERE total_students > 0 ORDER BY subject"
+        "SELECT subject FROM subject_global_stats WHERE total_students > 0 ORDER BY subject"
     ) as cursor:
         rows = await cursor.fetchall()
         return [r[0] for r in rows]
 
 
-async def get_subject_rating(subject: str) -> List[dict]:
-    """Рейтинг преподавателей по конкретному предмету."""
+async def get_global_subject_stats(subject: str) -> dict | None:
+    """Глобальная статистика по одному предмету."""
     db = await get_db_connection()
-    async with db.execute("""
-        SELECT teacher, SUM(total_students), SUM(passed_students),
-        ROUND(CAST(SUM(passed_students) AS FLOAT) / SUM(total_students) * 100, 1) as rate
-        FROM teacher_stats
-        WHERE subject = ?
-        GROUP BY teacher
-        HAVING SUM(total_students) > 0
-        ORDER BY rate DESC, SUM(total_students) DESC
-    """, (subject,)) as cursor:
-        rows = await cursor.fetchall()
-        return [
-            {"teacher": r[0], "total": r[1], "passed": r[2], "pass_rate": r[3]}
-            for r in rows
-        ]
-
+    async with db.execute(
+        "SELECT total_students, passed_students, pass_rate FROM subject_global_stats WHERE subject = ?",
+        (subject,)
+    ) as cursor:
+        row = await cursor.fetchone()
+        if not row:
+            return None
+        return {
+            "total": row[0],
+            "passed": row[1],
+            "pass_rate": row[2]
+        }
 
 async def get_teacher_subject_rank(teacher: str, subject: str) -> tuple[int, int] | None:
     """Возвращает место преподавателя в рейтинге по предмету (место, всего преподавателей)."""

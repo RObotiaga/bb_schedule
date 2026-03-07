@@ -25,6 +25,7 @@ admin_keyboard = ReplyKeyboardMarkup(
         [KeyboardButton(text="🔄 Обновить расписание")],
         [KeyboardButton(text="📥 Перезагрузить структуру")],
         [KeyboardButton(text="🏆 Обновить рейтинг")],
+        [KeyboardButton(text="📤 Экспорт рейтинга"), KeyboardButton(text="📥 Импорт рейтинга")],
         [KeyboardButton(text="⬅️ Выйти из админ-панели")]
     ],
     resize_keyboard=True
@@ -113,7 +114,7 @@ def get_teacher_nav_keyboard(current_offset: int, is_subscribed: bool = False):
     else:
         builder.button(text="🔔 Подписаться", callback_data="teacher_sub:subscribe")
     
-    builder.button(text="📊 Статистика", callback_data="teacher_stats")
+
     builder.adjust(2)
     
     row_buttons = [

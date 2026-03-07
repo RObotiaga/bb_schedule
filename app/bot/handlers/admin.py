@@ -1,13 +1,15 @@
 from aiogram import Router, F
-from aiogram.types import Message
+from aiogram.types import Message, BufferedInputFile
 from app.bot.filters import IsAdmin
 from app.bot.keyboards import admin_keyboard
 from app.services.schedule_sync import run_full_sync
 from app.services.rating_updater import run_rating_update
 from app.core.state import GlobalState
 from app.core.database import get_last_two_job_logs
+from app.services.db_transfer import export_rating_data, import_rating_data
 import logging
 import json
+import os
 
 router = Router()
 
@@ -76,8 +78,43 @@ async def admin_update_rating(message: Message):
         await run_rating_update(bot=message.bot, status_message=status_msg)
         await message.answer("✅ Рейтинг успешно обновлён!", reply_markup=admin_keyboard)
     except Exception as e:
-        logging.exception("Ошибка при обновлении рейтинга")
+        logging.exception("Ошибка при обвалвлении рейтинга")
         await message.answer(f"❌ Ошибка при обновлении рейтинга: {e}", reply_markup=admin_keyboard)
+
+@router.message(IsAdmin(), F.text == "📤 Экспорт рейтинга")
+async def admin_export_rating(message: Message):
+    await message.answer("📤 Подготавливаю экспорт рейтинга...")
+    try:
+        json_data = await export_rating_data()
+        file = BufferedInputFile(json_data.encode("utf-8"), filename="rating_export.json")
+        await message.answer_document(file, caption="✅ Экспорт рейтинга завершен.")
+    except Exception as e:
+        logging.exception("Ошибка при экспорте рейтинга")
+        await message.answer(f"❌ Ошибка при экспорте: {e}")
+
+@router.message(IsAdmin(), F.text == "📥 Импорт рейтинга")
+async def admin_import_rating_start(message: Message):
+    await message.answer("📥 Пожалуйста, отправьте JSON-файл с данными рейтинга.")
+
+@router.message(IsAdmin(), F.document)
+async def admin_import_rating_file(message: Message):
+    if not message.document.file_name.endswith(".json"):
+        return
+
+    status_msg = await message.answer("📥 Обработка файла...")
+    try:
+        file_info = await message.bot.get_file(message.document.file_id)
+        file_content = await message.bot.download_file(file_info.file_path)
+        json_data = file_content.read().decode("utf-8")
+        
+        success = await import_rating_data(json_data)
+        if success:
+            await status_msg.edit_text("✅ Данные рейтинга успешно импортированы!")
+        else:
+            await status_msg.edit_text("❌ Ошибка при импорте данных. Проверьте формат файла.")
+    except Exception as e:
+        logging.exception("Ошибка при импорте рейтинга")
+        await status_msg.edit_text(f"❌ Ошибка при импорте: {e}")
 
 @router.message(IsAdmin(), F.text == "⬅️ Выйти из админ-панели")
 async def admin_exit(message: Message):

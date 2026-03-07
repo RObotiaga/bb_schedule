@@ -47,7 +47,7 @@ def _has_current_year_subjects(subjects_json: str) -> bool:
         return False
 
 
-def cluster_students(records: List[dict]) -> Dict[str, int]:
+def cluster_students(records: List[dict], base_year: int = 0) -> Dict[str, int]:
     """
     Группирует студентов по набору предметов.
     Использует жадный алгоритм: берём первого неразмеченного студента,
@@ -63,7 +63,7 @@ def cluster_students(records: List[dict]) -> Dict[str, int]:
             student_subjects[rec["record_book"]] = subjects
 
     assignments = {}
-    cluster_id = 0
+    cluster_id = (base_year * 1000) if base_year > 0 else 0
     assigned = set()
 
     # Сортируем по количеству предметов (больше предметов = лучший представитель кластера)
@@ -149,7 +149,7 @@ async def run_clustering(enrollment_year: int = 2022):
         logging.warning("Нет данных для кластеризации")
         return
 
-    clusters = cluster_students(records)
+    clusters = cluster_students(records, base_year=enrollment_year)
     expelled = detect_expelled(records, clusters)
 
     # Сохраняем результаты в БД

@@ -5,7 +5,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from aiogram.types import InlineKeyboardButton
 
-from app.core.database import get_subjects_with_stats, get_subject_rating
+from app.core.database import get_subjects_with_stats
 from app.bot.keyboards import get_subjects_keyboard
 from app.bot.states import SubjectSearch
 from aiogram.types import InlineKeyboardMarkup
@@ -118,30 +118,26 @@ async def process_subj_select(callback: CallbackQuery, state: FSMContext):
         await callback.answer("Ошибка: не удалось найти предмет.", show_alert=True)
         return
         
+    from app.core.database import get_global_subject_stats
     subject = subjects[idx]
-    rating = await get_subject_rating(subject)
+    stats = await get_global_subject_stats(subject)
     
-    if not rating:
+    if not stats:
         await callback.answer("📭 Данных по этому предмету нет.", show_alert=True)
         return
         
-    lines = [f"🏆 <b>Рейтинг по предмету:</b>\n<i>{subject}</i>\n"]
-    for i, entry in enumerate(rating, start=1):
-        teacher = entry["teacher"]
-        passed = entry["passed"]
-        total = entry["total"]
-        rate = entry["pass_rate"]
-        
-        emoji = "🥇" if i == 1 else "🥈" if i == 2 else "🥉" if i == 3 else "🔸"
-        lines.append(f"{emoji} <b>{i}. {teacher}</b> — {passed}/{total} ({rate}%)")
-        
-        if i >= 50:
-            lines.append("\n<i>... и остальные</i>")
-            break
-            
-    text = "\n".join(lines)
-    if len(text) > 4000:
-        text = text[:3950] + "\n\n<i>... текст обрезан</i>"
+    passed = stats["passed"]
+    total = stats["total"]
+    rate = stats["pass_rate"]
+    debts = total - passed
+    
+    text = (
+        f"🏆 <b>Статистика по предмету:</b>\n"
+        f"<i>{subject}</i>\n\n"
+        f"📈 Успешно сдали: {passed} чел.\n"
+        f"📉 Имеют долг: {debts} чел.\n"
+        f"📊 Закрываемость: {rate}%"
+    )
         
     builder = InlineKeyboardBuilder()
     page = idx // 10

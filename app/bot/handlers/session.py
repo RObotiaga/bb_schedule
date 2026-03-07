@@ -39,7 +39,13 @@ def filter_results_by_settings(data: list, settings: dict) -> list:
         filtered.append(item)
     return filtered
 
-def format_results(data: list, settings: dict, rating_info: dict | None = None) -> str:
+def format_results(data: list, settings: dict = None, rating_info: dict | None = None, subject_stats: dict | None = None, cluster_subject_stats: dict | None = None) -> str:
+    if settings is None:
+        settings = {}
+    if subject_stats is None:
+        subject_stats = {}
+    if cluster_subject_stats is None:
+        cluster_subject_stats = {}
     if not data: return "📭 Результаты не найдены."
     
     filtered_data = filter_results_by_settings(data, settings)
@@ -80,15 +86,21 @@ def format_results(data: list, settings: dict, rating_info: dict | None = None) 
     
     # Место в рейтинге (если данные доступны)
     if rating_info:
+        def get_better_than_text(pos, total):
+            if total > 1:
+                percent = int(round((total - pos) / total * 100))
+                return f" (Лучше чем {percent}% учеников!)"
+            return ""
+
         if "cluster_pos" in rating_info:
             pos, total = rating_info["cluster_pos"]
-            output.append(f"📍 Место в группе: {pos} из {total}")
+            output.append(f"📍 Место среди специальности: {pos} из {total}{get_better_than_text(pos, total)}")
         if "year_pos" in rating_info:
             pos, total = rating_info["year_pos"]
-            output.append(f"📍 Место за свой год: {pos} из {total}")
+            output.append(f"📍 Место среди всех поступивших за год: {pos} из {total}{get_better_than_text(pos, total)}")
         if "all_pos" in rating_info:
             pos, total = rating_info["all_pos"]
-            output.append(f"📍 Место за все года: {pos} из {total}")
+            output.append(f"📍 Место за все года: {pos} из {total}{get_better_than_text(pos, total)}")
     
     output.append("")
     
@@ -99,8 +111,14 @@ def format_results(data: list, settings: dict, rating_info: dict | None = None) 
         sem = int(sem_m.group(1)) if sem_m else 999
         return (year, sem)
     
+    def escape_md(text: str) -> str:
+        """Escape MarkdownV1 reserved characters: _ * ` [."""
+        for char in ('_', '*', '`', '['):
+            text = text.replace(char, f'\\{char}')
+        return text
+    
     for course in sorted_courses:
-        output.append(f"\n🎓 *{course}*")
+        output.append(f"\n🎓 *{escape_md(course)}*")
         
         sorted_sems = sorted(courses[course].keys(), key=sem_sort_key)
         for sem in sorted_sems:
@@ -109,8 +127,19 @@ def format_results(data: list, settings: dict, rating_info: dict | None = None) 
                 icon = "✅" if item['passed'] else "⚠️"
                 if not item['passed']: icon = "❌"
                 if "неудовл" in item['grade'].lower(): icon = "❌"
-                line = f"{icon} *{item['subject']}*\n   🔹 {item['grade']}"
-                if item['date']: line += f" ({item['date']})"
+                safe_subject = escape_md(item['subject'])
+                line = f"{icon} *{safe_subject}*\n   🔹 {escape_md(item['grade'])}"
+                
+                # Check for global subject stats
+                subj_name = item['subject'].strip()
+                if subj_name in cluster_subject_stats:
+                    c_pass_rate = cluster_subject_stats[subj_name]
+                    line += f"  |  👥 В группе: {c_pass_rate}%"
+                if subj_name in subject_stats:
+                    pass_rate = subject_stats[subj_name]
+                    line += f"  |  🌍 Глобально: {pass_rate}%"
+                    
+                if item['date']: line += f" ({escape_md(item['date'])})"
                 semester_lines.append(line)
             
             if semester_lines:
@@ -120,6 +149,7 @@ def format_results(data: list, settings: dict, rating_info: dict | None = None) 
     return "\n".join(output)
 
 async def show_results_view(target: Message | CallbackQuery, user_id: int, record_book_number: str):
+    from app.core.database import get_global_subject_stats, get_cluster_subject_stats, get_rating_position, get_db_connection
     msg = target if isinstance(target, Message) else target.message
     if isinstance(target, Message):
         msg = await target.answer(f"🔍 Ищу результаты для зачетки: *{record_book_number}*...", parse_mode="Markdown")
@@ -152,10 +182,41 @@ async def show_results_view(target: Message | CallbackQuery, user_id: int, recor
             
         if not rating_info:
             rating_info = None
+            
+        # We need cluster_id to fetch cluster subject stats
+        cluster_id = None
+        db = await get_db_connection()
+        async with db.execute("SELECT cluster_id FROM rating_data WHERE record_book = ?", (record_book_number,)) as cur:
+            row = await cur.fetchone()
+            if row and row[0]:
+                cluster_id = row[0]
+                
+        cluster_subject_stats = {}
+        if cluster_id:
+            cluster_subject_stats = await get_cluster_subject_stats(cluster_id)
+            
+        subject_stats = {}
+        for item in results_data:
+            subj_name = item.get("subject", "").strip()
+            if subj_name and subj_name not in subject_stats:
+                stats = await get_global_subject_stats(subj_name)
+                if stats:
+                    subject_stats[subj_name] = stats["pass_rate"]
         
-        formatted_text = format_results(results_data, settings, rating_info)
+        formatted_text = format_results(results_data, settings, rating_info, subject_stats, cluster_subject_stats)
         if len(formatted_text) > 4000:
-            parts = [formatted_text[i:i+4000] for i in range(0, len(formatted_text), 4000)]
+            lines = formatted_text.split('\n')
+            parts = []
+            current_part = ""
+            for line in lines:
+                if len(current_part) + len(line) + 1 > 4000:
+                    parts.append(current_part)
+                    current_part = line
+                else:
+                    current_part += ("\n" + line) if current_part else line
+            if current_part:
+                parts.append(current_part)
+                
             for i, part in enumerate(parts):
                 markup = get_session_results_keyboard() if i == len(parts) - 1 else None
                 if i == 0: await msg.edit_text(part, parse_mode="Markdown", reply_markup=markup)
