@@ -191,35 +191,76 @@ def get_subjects_keyboard(subjects: list, page: int = 0, per_page: int = 10):
 
 # --- Админ: Статистика по группам ---
 
-def get_admin_groups_keyboard(groups: list[dict], page: int = 0, per_page: int = 15):
+class AdminCourseCallbackFactory(CallbackData, prefix="adm_crs"):
+    course_id: int
+    faculty_id: int
+
+def get_admin_faculties_keyboard(faculties_list: list):
     builder = InlineKeyboardBuilder()
-    start_idx = page * per_page
-    end_idx = start_idx + per_page
-    current_groups = groups[start_idx:end_idx]
+    if not faculties_list:
+        return builder.as_markup()
+        
+    for i, name in enumerate(faculties_list):
+        builder.button(text=name, callback_data=f"adm_fac:{i}")
+    builder.adjust(2)
+    return builder.as_markup()
+
+def get_admin_courses_keyboard(faculty_id: int, faculties_list: list, structured_data: dict):
+    if faculty_id < 0 or faculty_id >= len(faculties_list):
+        return None
+
+    faculty = faculties_list[faculty_id] 
     
-    for g in current_groups:
-        cluster_id = g['cluster_id']
-        group_name = g['group_name']
-        builder.button(text=group_name, callback_data=f"adm_grp:{cluster_id}")
+    builder = InlineKeyboardBuilder()
+    raw_courses = structured_data.get(faculty, {}).keys()
+    
+    def sort_key(c):
+        return int(c) if str(c).isdigit() else 99
+        
+    courses = sorted(raw_courses, key=sort_key)
+    
+    if not courses:
+         builder.row(InlineKeyboardButton(text="⬅️ Назад к факультетам", callback_data="adm_back_fac"))
+         return builder.as_markup()
+         
+    for course in courses:
+        try:
+            course_int = int(course)
+        except ValueError:
+             continue
+             
+        builder.button(
+            text=f"{course} курс",
+            callback_data=AdminCourseCallbackFactory(course_id=course_int, faculty_id=faculty_id)
+        )
         
     builder.adjust(2)
+    builder.row(InlineKeyboardButton(text="⬅️ Назад к факультетам", callback_data="adm_back_fac"))
+    return builder.as_markup()
+
+def get_admin_groups_keyboard(faculty: str, course: str, faculties_list: list, structured_data: dict):
+    builder = InlineKeyboardBuilder()
+    groups = sorted(structured_data.get(faculty, {}).get(course, []))
+    for g in groups:
+        builder.button(text=g, callback_data=f"adm_grp_name:{g}")
+    builder.adjust(2)
     
-    nav_buttons = []
-    if page > 0:
-        nav_buttons.append(InlineKeyboardButton(text="⬅️ Назад", callback_data=f"adm_grps_page:{page - 1}"))
-    if end_idx < len(groups):
-        nav_buttons.append(InlineKeyboardButton(text="Вперед ➡️", callback_data=f"adm_grps_page:{page + 1}"))
-        
-    if nav_buttons:
-        builder.row(*nav_buttons)
-        
+    try:
+        faculty_id = faculties_list.index(faculty)
+    except ValueError:
+        faculty_id = 0
+    
+    builder.row(InlineKeyboardButton(
+        text=f"⬅️ Назад к курсам ({faculty})", 
+        callback_data=f"adm_back_crs:{faculty_id}" 
+    ))
     return builder.as_markup()
 
 def get_admin_group_actions_keyboard(cluster_id: int):
     builder = InlineKeyboardBuilder()
     builder.button(text="📚 Поиск по предметам", callback_data=f"adm_g_act_subj:{cluster_id}")
     builder.button(text="🔢 Поиск по номеру зачетки", callback_data=f"adm_g_act_rec:{cluster_id}")
-    builder.button(text="⬅️ К списку групп", callback_data="adm_grps_page:0")
+    builder.button(text="⬅️ К списку факультетов", callback_data="adm_back_fac")
     builder.adjust(1)
     return builder.as_markup()
 

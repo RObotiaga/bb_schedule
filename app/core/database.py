@@ -732,6 +732,16 @@ async def get_group_by_cluster(cluster_id: int) -> str | None:
         row = await cursor.fetchone()
         return row[0] if row else None
 
+async def get_cluster_by_group(group_name: str) -> int | None:
+    """Возвращает cluster_id по имени группы."""
+    db = await get_db_connection()
+    async with db.execute(
+        "SELECT cluster_id FROM cluster_groups WHERE group_name = ?",
+        (group_name,),
+    ) as cursor:
+        row = await cursor.fetchone()
+        return row[0] if row else None
+
 
 async def get_all_cluster_groups() -> List[dict]:
     """Все маппинги кластер → группа."""

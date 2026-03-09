@@ -166,29 +166,66 @@ async def admin_panel(message: Message):
 # --- Статистика по группам ---
 
 from app.core.database import (
-    get_all_cluster_groups, get_group_by_cluster, get_cluster_subjects, 
+    get_all_cluster_groups, get_cluster_by_group, get_group_by_cluster, get_cluster_subjects, 
     get_subject_status_in_cluster, get_record_books_in_cluster, get_record_book_subjects
 )
 from app.bot.keyboards import (
-    get_admin_groups_keyboard, get_admin_group_actions_keyboard, 
-    get_admin_group_subjects_keyboard, get_admin_group_record_books_keyboard
+    get_admin_faculties_keyboard, get_admin_courses_keyboard, get_admin_groups_keyboard,
+    get_admin_group_actions_keyboard, get_admin_group_subjects_keyboard, get_admin_group_record_books_keyboard,
+    AdminCourseCallbackFactory
 )
+from app.core.state import GlobalState
 
 @router.message(IsAdmin(), F.text == "👥 Группы")
 async def admin_groups_list(message: Message):
-    groups = await get_all_cluster_groups()
-    if not groups:
-        await message.answer("В базе нет групп (кластеров).")
+    if not GlobalState.FACULTIES_LIST:
+        await message.answer("Структура факультетов не загружена.")
         return
-    kb = get_admin_groups_keyboard(groups, page=0)
-    await message.answer("Выберите группу:", reply_markup=kb)
+    kb = get_admin_faculties_keyboard(GlobalState.FACULTIES_LIST)
+    await message.answer("Выберите факультет:", reply_markup=kb)
 
-@router.callback_query(IsAdmin(), F.data.startswith("adm_grps_page:"))
-async def admin_groups_page(callback: CallbackQuery):
-    page = int(callback.data.split(":")[1])
-    groups = await get_all_cluster_groups()
-    kb = get_admin_groups_keyboard(groups, page=page)
-    await callback.message.edit_text("Выберите группу:", reply_markup=kb)
+@router.callback_query(IsAdmin(), F.data == "adm_back_fac")
+async def admin_groups_back_fac(callback: CallbackQuery):
+    kb = get_admin_faculties_keyboard(GlobalState.FACULTIES_LIST)
+    await callback.message.edit_text("Выберите факультет:", reply_markup=kb)
+
+@router.callback_query(IsAdmin(), F.data.startswith("adm_fac:"))
+async def admin_groups_select_faculty(callback: CallbackQuery):
+    faculty_id = int(callback.data.split(":")[1])
+    kb = get_admin_courses_keyboard(faculty_id, GlobalState.FACULTIES_LIST, GlobalState.STRUCTURED_DATA)
+    if kb:
+        await callback.message.edit_text("Выберите курс:", reply_markup=kb)
+    else:
+        await callback.answer("Ошибка: факультет не найден")
+
+@router.callback_query(IsAdmin(), F.data.startswith("adm_back_crs:"))
+async def admin_groups_back_crs(callback: CallbackQuery):
+    faculty_id = int(callback.data.split(":")[1])
+    kb = get_admin_courses_keyboard(faculty_id, GlobalState.FACULTIES_LIST, GlobalState.STRUCTURED_DATA)
+    if kb:
+        await callback.message.edit_text("Выберите курс:", reply_markup=kb)
+
+@router.callback_query(IsAdmin(), AdminCourseCallbackFactory.filter())
+async def admin_groups_select_course(callback: CallbackQuery, callback_data: AdminCourseCallbackFactory):
+    course_id = callback_data.course_id
+    faculty_id = callback_data.faculty_id
+    
+    try:
+        faculty = GlobalState.FACULTIES_LIST[faculty_id]
+        kb = get_admin_groups_keyboard(faculty, str(course_id), GlobalState.FACULTIES_LIST, GlobalState.STRUCTURED_DATA)
+        await callback.message.edit_text("Выберите группу:", reply_markup=kb)
+    except Exception as e:
+        await callback.answer("Ошибка при выборе курса")
+
+@router.callback_query(IsAdmin(), F.data.startswith("adm_grp_name:"))
+async def admin_groups_select_group(callback: CallbackQuery):
+    group_name = callback.data.split(":", 1)[1]
+    cluster_id = await get_cluster_by_group(group_name)
+    if cluster_id is None:
+        await callback.answer("У этой группы еще нет собранной статистики.", show_alert=True)
+        return
+    kb = get_admin_group_actions_keyboard(cluster_id)
+    await callback.message.edit_text(f"Группа: {group_name}\nВыберите действие:", reply_markup=kb)
 
 @router.callback_query(IsAdmin(), F.data.startswith("adm_grp:"))
 async def admin_group_actions(callback: CallbackQuery):
