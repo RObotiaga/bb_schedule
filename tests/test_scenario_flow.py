@@ -147,14 +147,20 @@ async def test_start_registered(mock_message, mock_bot_data, mocker):
     await send_welcome(mock_message)
     
     # Verify response
-    mock_message.answer.assert_called()
-    args, kwargs = mock_message.answer.call_args
+    assert mock_message.answer.call_count == 2
     
-    assert "С возвращением" in args[0]
-    assert "СОт-412" in args[0]
+    # First call: Welcome back with change group keyboard
+    args1, kwargs1 = mock_message.answer.call_args_list[0]
+    assert "С возвращением" in args1[0]
+    assert "СОт-412" in args1[0]
+    assert isinstance(kwargs1.get('reply_markup'), InlineKeyboardMarkup)
+    
+    # Second call: Day selection keyboard
+    args2, kwargs2 = mock_message.answer.call_args_list[1]
+    assert "Вы можете посмотреть расписание" in args2[0]
     
     # Verify Day Selection Keyboard (ReplyKeyboardMarkup)
-    keyboard = kwargs['reply_markup']
+    keyboard = kwargs2['reply_markup']
     assert isinstance(keyboard, ReplyKeyboardMarkup)
     # ReplyKeyboardMarkup has 'keyboard' attribute which is list of list of buttons
     buttons = [btn.text for row in keyboard.keyboard for btn in row]
