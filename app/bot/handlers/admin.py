@@ -116,6 +116,25 @@ async def admin_import_rating_file(message: Message):
         logging.exception("Ошибка при импорте рейтинга")
         await status_msg.edit_text(f"❌ Ошибка при импорте: {e}")
 
+@router.message(IsAdmin(), F.text == "📉 Статистика отчислений")
+async def admin_expelled_statistics(message: Message):
+    from app.core.database import get_expelled_statistics
+    
+    try:
+        stats = await get_expelled_statistics()
+        
+        msg_parts = [
+            "📉 *Статистика отчислений:*\n",
+            f"🔹 С начала учебного года (с 01.09): {stats['since_year_start']}",
+            f"🔹 С начала семестра: {stats['since_semester_start']}",
+            f"🔹 Всего отчисленных в базе: {stats['total']}"
+        ]
+        
+        await message.answer("\n".join(msg_parts), parse_mode="Markdown")
+    except Exception as e:
+        logging.exception("Ошибка получения статистики отчислений")
+        await message.answer(f"❌ Возникла ошибка: {e}")
+
 @router.message(IsAdmin(), F.text == "⬅️ Выйти из админ-панели")
 async def admin_exit(message: Message):
     from app.bot.keyboards import day_selection_keyboard

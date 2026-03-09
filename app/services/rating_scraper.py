@@ -259,10 +259,17 @@ async def scrape_all_records(
                     current_num += 1
                     record_book = f"{year}{num:04d}"
                     
+                    from app.core.database import is_student_expelled_in_db
+                    is_expelled = await is_student_expelled_in_db(record_book)
+                    
                     # Ротация User-Agent
                     session.headers["User-Agent"] = random.choice(USER_AGENTS)
                 
-                status, data = await scrape_record_book(session, record_book)
+                if is_expelled:
+                    # Пропускаем HTTP запрос, если уже отчислен
+                    status, data = "SUCCESS", []
+                else:
+                    status, data = await scrape_record_book(session, record_book)
                 
                 # Синхронное обновление статистики
                 stats["total"] += 1

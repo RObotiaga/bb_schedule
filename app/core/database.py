@@ -132,6 +132,29 @@ async def initialize_database():
         )
     """)
     
+    # Отчисленные студенты
+    await db.execute("""
+        CREATE TABLE IF NOT EXISTS expelled_students (
+            record_book TEXT PRIMARY KEY,
+            enrollment_year INTEGER,
+            expelled_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            cluster_id INTEGER
+        )
+    """)
+    
+    # Миграция: перенос существующих отчисленных в новую таблицу
+    try:
+        await db.execute("""
+            INSERT OR IGNORE INTO expelled_students (record_book, enrollment_year, cluster_id)
+            SELECT record_book, enrollment_year, cluster_id
+            FROM rating_data
+            WHERE is_expelled = 1
+        """)
+        await db.execute("DELETE FROM rating_data WHERE is_expelled = 1")
+        await db.commit()
+    except aiosqlite.OperationalError as e:
+        logging.error(f"Migration expelled_students error: {e}")
+    
     # --- Индексы для оптимизации выборок ---
     await db.execute("CREATE INDEX IF NOT EXISTS idx_group_date ON schedule (group_name, lesson_date)")
     await db.execute("CREATE INDEX IF NOT EXISTS idx_faculty_course_group ON schedule (faculty, course, group_name)")
@@ -511,6 +534,58 @@ async def update_rating_cluster(record_book: str, cluster_id: int, is_expelled: 
         (cluster_id, is_expelled, record_book),
     )
     await db.commit()
+
+
+# --- Отчисленные студенты ---
+
+async def is_student_expelled_in_db(record_book: str) -> bool:
+    """Проверяет, есть ли студент в таблице отчисленных."""
+    db = await get_db_connection()
+    async with db.execute("SELECT 1 FROM expelled_students WHERE record_book = ?", (record_book,)) as cursor:
+        row = await cursor.fetchone()
+        return bool(row)
+
+async def save_expelled_student(record_book: str, enrollment_year: int, cluster_id: int):
+    """Сохраняет студента как отчисленного и удаляет из основного рейтинга."""
+    db = await get_db_connection()
+    await db.execute("""
+        INSERT OR IGNORE INTO expelled_students (record_book, enrollment_year, cluster_id)
+        VALUES (?, ?, ?)
+    """, (record_book, enrollment_year, cluster_id))
+    await db.execute("DELETE FROM rating_data WHERE record_book = ?", (record_book,))
+    await db.commit()
+
+async def get_expelled_statistics() -> dict:
+    """Возвращает статистику по отчисленным студентам (с начала года, семестра, всего)."""
+    db = await get_db_connection()
+    
+    # Используем import datetime локально, если он еще не импортирован на уровне модуля
+    from datetime import datetime
+    now = datetime.now()
+    
+    # Считаем начало учебного года (если сейчас до сентября, то прошлый год)
+    year_start_year = now.year if now.month >= 9 else now.year - 1
+    year_start = f"{year_start_year}-09-01 00:00:00"
+    
+    # Считаем начало семестра (весенний с 1 февраля, осенний с 1 сентября)
+    sem_start_month = "02" if now.month < 9 and now.month >= 2 else "09"
+    sem_start_year = now.year if sem_start_month == "09" and now.month >= 9 else (now.year if sem_start_month == "02" else now.year - 1)
+    sem_start = f"{sem_start_year}-{sem_start_month}-01 00:00:00"
+
+    async with db.execute("SELECT COUNT(*) FROM expelled_students WHERE expelled_at >= ?", (year_start,)) as cursor:
+        since_year_start = (await cursor.fetchone())[0]
+
+    async with db.execute("SELECT COUNT(*) FROM expelled_students WHERE expelled_at >= ?", (sem_start,)) as cursor:
+        since_semester_start = (await cursor.fetchone())[0]
+
+    async with db.execute("SELECT COUNT(*) FROM expelled_students") as cursor:
+        total = (await cursor.fetchone())[0]
+
+    return {
+        "since_year_start": since_year_start,
+        "since_semester_start": since_semester_start,
+        "total": total
+    }
 
 
 async def get_rating_position(record_book: str, scope: str = "all") -> tuple[int, int] | None:

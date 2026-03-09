@@ -313,3 +313,43 @@ async def test_unsubscribe_teacher():
     await database.unsubscribe_teacher(user_id, teacher)
     assert await database.is_subscribed_to_teacher(user_id, teacher) is False
 
+# === Expelled Students Tests ===
+
+@pytest.mark.asyncio
+async def test_expelled_students_workflow():
+    """Тест сохранения и получения отчисленных студентов."""
+    await database.initialize_database()
+    db = await database.get_db_connection()
+    
+    # Сначала добавим запись в rating_data
+    await database.save_rating_record(
+        record_book="20220001",
+        enrollment_year=2022,
+        subjects_json="[]",
+        total_subjects=0,
+        passed_subjects=0,
+        pass_rate=0.0,
+        last_academic_year="2024/2025"
+    )
+    
+    # Проверяем, что студент пока не отчислен
+    is_expelled = await database.is_student_expelled_in_db("20220001")
+    assert is_expelled is False
+    
+    # Отчисляем студента
+    await database.save_expelled_student("20220001", 2022, cluster_id=1)
+    
+    # Проверяем, что студент теперь числится отчисленным
+    is_expelled_now = await database.is_student_expelled_in_db("20220001")
+    assert is_expelled_now is True
+    
+    # Убеждаемся, что он удален из rating_data
+    async with db.execute("SELECT 1 FROM rating_data WHERE record_book = '20220001'") as cursor:
+        assert await cursor.fetchone() is None
+        
+    # Проверяем статистику
+    stats = await database.get_expelled_statistics()
+    assert stats["total"] >= 1
+    assert stats["since_year_start"] >= 0
+    assert stats["since_semester_start"] >= 0
+

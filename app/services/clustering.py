@@ -8,7 +8,7 @@ import re
 from collections import defaultdict
 from typing import List, Dict
 
-from app.core.database import get_all_rating_records, update_rating_cluster
+from app.core.database import get_all_rating_records, update_rating_cluster, save_expelled_student
 
 # Минимальный процент совпадения предметов для объединения в один кластер
 SIMILARITY_THRESHOLD = 0.80
@@ -156,7 +156,11 @@ async def run_clustering(enrollment_year: int = 2022):
     for rec in records:
         book = rec["record_book"]
         cid = clusters.get(book, 0)
-        is_exp = 1 if expelled.get(book, False) else 0
-        await update_rating_cluster(book, cid, is_exp)
+        is_exp = expelled.get(book, False)
+        
+        if is_exp:
+            await save_expelled_student(book, enrollment_year, cid)
+        else:
+            await update_rating_cluster(book, cid, 0)
 
     logging.info(f"Кластеризация завершена для {enrollment_year} года")
