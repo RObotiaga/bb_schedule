@@ -6,7 +6,8 @@ from aiogram.fsm.context import FSMContext
 from app.core.database import get_user_group_db, save_user_group_db
 from app.bot.keyboards import (
     day_selection_keyboard, get_faculties_keyboard, 
-    get_courses_keyboard, get_groups_keyboard, CourseCallbackFactory
+    get_courses_keyboard, get_groups_keyboard, CourseCallbackFactory,
+    get_welcome_inline_keyboard
 )
 from app.core.state import GlobalState
 
@@ -18,7 +19,11 @@ async def send_welcome(message: Message):
     
     if user_group:
         await message.answer(
-            f"👋 С возвращением! Ваша группа: *{user_group}*.\n\n"
+            f"👋 С возвращением! Ваша группа: *{user_group}*.",
+            reply_markup=get_welcome_inline_keyboard(),
+            parse_mode="Markdown"
+        )
+        await message.answer(
             "Вы можете посмотреть расписание на выбранный день.",
             reply_markup=day_selection_keyboard,
             parse_mode="Markdown"
@@ -29,6 +34,14 @@ async def send_welcome(message: Message):
                              "Для поиска по группе - выберите ваш факультет.\n"
                              "Для поиска по преподавателю - просто напишите его фамилию.",
                              reply_markup=get_faculties_keyboard(GlobalState.FACULTIES_LIST))
+
+@router.callback_query(F.data == "change_group")
+async def change_group_callback(callback: CallbackQuery):
+    await callback.message.edit_text(
+        "Пожалуйста, выберите ваш факультет:", 
+        reply_markup=get_faculties_keyboard(GlobalState.FACULTIES_LIST)
+    )
+    await callback.answer()
 
 @router.callback_query(F.data.startswith("faculty:"))
 async def process_faculty_choice(callback: CallbackQuery):

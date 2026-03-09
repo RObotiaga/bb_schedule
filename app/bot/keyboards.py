@@ -8,6 +8,11 @@ class CourseCallbackFactory(CallbackData, prefix="course"):
     course_id: int
     faculty_id: int
 
+def get_welcome_inline_keyboard():
+    builder = InlineKeyboardBuilder()
+    builder.button(text="✏️ Изменить группу", callback_data="change_group")
+    return builder.as_markup()
+
 # Static Keyboards
 day_selection_keyboard = ReplyKeyboardMarkup(
     keyboard=[
