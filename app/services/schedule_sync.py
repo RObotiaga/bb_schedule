@@ -146,6 +146,9 @@ class ScheduleFetcher:
             name = link.get_text(strip=True)
             if not name or not href:
                 continue
+                
+            if name.lower() in ("открыть", "open"):
+                continue
 
             # Факультеты — подпапки текущей недели
             week_basename = week_cms_path.rstrip("/").split("/")[-1]
