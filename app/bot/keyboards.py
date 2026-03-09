@@ -26,11 +26,12 @@ admin_keyboard = ReplyKeyboardMarkup(
         [KeyboardButton(text="📥 Перезагрузить структуру")],
         [KeyboardButton(text="🏆 Обновить рейтинг")],
         [KeyboardButton(text="📤 Экспорт рейтинга"), KeyboardButton(text="📥 Импорт рейтинга")],
-        [KeyboardButton(text="📉 Статистика отчислений")],
+        [KeyboardButton(text="👥 Группы"), KeyboardButton(text="📉 Статистика отчислений")],
         [KeyboardButton(text="⬅️ Выйти из админ-панели")]
     ],
     resize_keyboard=True
 )
+
 
 # Dynamic Keyboards
 
@@ -187,3 +188,88 @@ def get_subjects_keyboard(subjects: list, page: int = 0, per_page: int = 10):
         
     return builder.as_markup()
 
+
+# --- Админ: Статистика по группам ---
+
+def get_admin_groups_keyboard(groups: list[dict], page: int = 0, per_page: int = 15):
+    builder = InlineKeyboardBuilder()
+    start_idx = page * per_page
+    end_idx = start_idx + per_page
+    current_groups = groups[start_idx:end_idx]
+    
+    for g in current_groups:
+        cluster_id = g['cluster_id']
+        group_name = g['group_name']
+        builder.button(text=group_name, callback_data=f"adm_grp:{cluster_id}")
+        
+    builder.adjust(2)
+    
+    nav_buttons = []
+    if page > 0:
+        nav_buttons.append(InlineKeyboardButton(text="⬅️ Назад", callback_data=f"adm_grps_page:{page - 1}"))
+    if end_idx < len(groups):
+        nav_buttons.append(InlineKeyboardButton(text="Вперед ➡️", callback_data=f"adm_grps_page:{page + 1}"))
+        
+    if nav_buttons:
+        builder.row(*nav_buttons)
+        
+    return builder.as_markup()
+
+def get_admin_group_actions_keyboard(cluster_id: int):
+    builder = InlineKeyboardBuilder()
+    builder.button(text="📚 Поиск по предметам", callback_data=f"adm_g_act_subj:{cluster_id}")
+    builder.button(text="🔢 Поиск по номеру зачетки", callback_data=f"adm_g_act_rec:{cluster_id}")
+    builder.button(text="⬅️ К списку групп", callback_data="adm_grps_page:0")
+    builder.adjust(1)
+    return builder.as_markup()
+
+def get_admin_group_subjects_keyboard(cluster_id: int, subjects: list[str], page: int = 0, per_page: int = 10):
+    builder = InlineKeyboardBuilder()
+    start_idx = page * per_page
+    end_idx = start_idx + per_page
+    current_subjects = subjects[start_idx:end_idx]
+    
+    for i, subj in enumerate(current_subjects):
+        actual_idx = start_idx + i
+        display_text = subj[:40] + "..." if len(subj) > 40 else subj
+        builder.button(text=display_text, callback_data=f"adm_g_subj:{cluster_id}:{actual_idx}")
+        
+    builder.adjust(1)
+    
+    nav_buttons = []
+    if page > 0:
+        nav_buttons.append(InlineKeyboardButton(text="⬅️ Назад", callback_data=f"adm_g_subj_page:{cluster_id}:{page - 1}"))
+    if end_idx < len(subjects):
+        nav_buttons.append(InlineKeyboardButton(text="Вперед ➡️", callback_data=f"adm_g_subj_page:{cluster_id}:{page + 1}"))
+        
+    if nav_buttons:
+        builder.row(*nav_buttons)
+        
+    builder.row(InlineKeyboardButton(text="⬅️ Назад к действиям", callback_data=f"adm_grp:{cluster_id}"))
+    return builder.as_markup()
+
+def get_admin_group_record_books_keyboard(cluster_id: int, record_books: list[dict], page: int = 0, per_page: int = 15):
+    builder = InlineKeyboardBuilder()
+    start_idx = page * per_page
+    end_idx = start_idx + per_page
+    current_books = record_books[start_idx:end_idx]
+    
+    for i, rb_data in enumerate(current_books):
+        actual_idx = start_idx + i
+        rb_num = rb_data['record_book']
+        pass_rate = rb_data['pass_rate']
+        builder.button(text=f"{rb_num} ({pass_rate:.1f}%)", callback_data=f"adm_g_rec:{cluster_id}:{actual_idx}")
+        
+    builder.adjust(2)
+    
+    nav_buttons = []
+    if page > 0:
+        nav_buttons.append(InlineKeyboardButton(text="⬅️ Назад", callback_data=f"adm_g_rec_page:{cluster_id}:{page - 1}"))
+    if end_idx < len(record_books):
+        nav_buttons.append(InlineKeyboardButton(text="Вперед ➡️", callback_data=f"adm_g_rec_page:{cluster_id}:{page + 1}"))
+        
+    if nav_buttons:
+        builder.row(*nav_buttons)
+        
+    builder.row(InlineKeyboardButton(text="⬅️ Назад к действиям", callback_data=f"adm_grp:{cluster_id}"))
+    return builder.as_markup()

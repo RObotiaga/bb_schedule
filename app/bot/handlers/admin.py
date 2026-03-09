@@ -1,5 +1,5 @@
 from aiogram import Router, F
-from aiogram.types import Message, BufferedInputFile
+from aiogram.types import Message, BufferedInputFile, CallbackQuery
 from app.bot.filters import IsAdmin
 from app.bot.keyboards import admin_keyboard
 from app.services.schedule_sync import run_full_sync
@@ -130,7 +130,26 @@ async def admin_expelled_statistics(message: Message):
             f"🔹 Всего отчисленных в базе: {stats['total']}"
         ]
         
-        await message.answer("\n".join(msg_parts), parse_mode="Markdown")
+        record_books = stats.get('all_record_books', [])
+        
+        text = "\n".join(msg_parts)
+        if not record_books:
+            text += "\n\nСписок отчисленных пуст."
+            await message.answer(text, parse_mode="Markdown")
+        else:
+            list_text = ", ".join(f"`{rb}`" for rb in record_books)
+            # Если текст со списком помещается в лимит Telegram (4096), отправляем прямо в сообщении
+            if len(text) + len(list_text) < 3800:
+                text += "\n\n📋 *Список зачеток:*\n" + list_text
+                await message.answer(text, parse_mode="Markdown")
+            else:
+                text += "\n\n📋 Список зачеток прикреплен файлом (слишком длинный для сообщения)."
+                await message.answer(text, parse_mode="Markdown")
+                
+                from aiogram.types import BufferedInputFile
+                file_content = "\n".join(record_books).encode('utf-8')
+                doc = BufferedInputFile(file_content, filename="expelled_students.txt")
+                await message.answer_document(doc, caption="Список зачеток отчисленных")
     except Exception as e:
         logging.exception("Ошибка получения статистики отчислений")
         await message.answer(f"❌ Возникла ошибка: {e}")
@@ -143,3 +162,139 @@ async def admin_exit(message: Message):
 @router.message(IsAdmin(), F.text == "/admin")
 async def admin_panel(message: Message):
     await message.answer("Админ-панель:", reply_markup=admin_keyboard)
+
+# --- Статистика по группам ---
+
+from app.core.database import (
+    get_all_cluster_groups, get_group_by_cluster, get_cluster_subjects, 
+    get_subject_status_in_cluster, get_record_books_in_cluster, get_record_book_subjects
+)
+from app.bot.keyboards import (
+    get_admin_groups_keyboard, get_admin_group_actions_keyboard, 
+    get_admin_group_subjects_keyboard, get_admin_group_record_books_keyboard
+)
+
+@router.message(IsAdmin(), F.text == "👥 Группы")
+async def admin_groups_list(message: Message):
+    groups = await get_all_cluster_groups()
+    if not groups:
+        await message.answer("В базе нет групп (кластеров).")
+        return
+    kb = get_admin_groups_keyboard(groups, page=0)
+    await message.answer("Выберите группу:", reply_markup=kb)
+
+@router.callback_query(IsAdmin(), F.data.startswith("adm_grps_page:"))
+async def admin_groups_page(callback: CallbackQuery):
+    page = int(callback.data.split(":")[1])
+    groups = await get_all_cluster_groups()
+    kb = get_admin_groups_keyboard(groups, page=page)
+    await callback.message.edit_text("Выберите группу:", reply_markup=kb)
+
+@router.callback_query(IsAdmin(), F.data.startswith("adm_grp:"))
+async def admin_group_actions(callback: CallbackQuery):
+    cluster_id = int(callback.data.split(":")[1])
+    group_name = await get_group_by_cluster(cluster_id)
+    kb = get_admin_group_actions_keyboard(cluster_id)
+    await callback.message.edit_text(f"Группа: {group_name}\nВыберите действие:", reply_markup=kb)
+
+@router.callback_query(IsAdmin(), F.data.startswith("adm_g_act_subj:"))
+async def admin_group_subjects_list(callback: CallbackQuery):
+    cluster_id = int(callback.data.split(":")[1])
+    group_name = await get_group_by_cluster(cluster_id)
+    subjects = sorted(list(await get_cluster_subjects(cluster_id)))
+    kb = get_admin_group_subjects_keyboard(cluster_id, subjects, page=0)
+    await callback.message.edit_text(f"Группа: {group_name}\nВыберите предмет:", reply_markup=kb)
+
+@router.callback_query(IsAdmin(), F.data.startswith("adm_g_subj_page:"))
+async def admin_group_subjects_page(callback: CallbackQuery):
+    parts = callback.data.split(":")
+    cluster_id = int(parts[1])
+    page = int(parts[2])
+    group_name = await get_group_by_cluster(cluster_id)
+    subjects = sorted(list(await get_cluster_subjects(cluster_id)))
+    kb = get_admin_group_subjects_keyboard(cluster_id, subjects, page=page)
+    await callback.message.edit_text(f"Группа: {group_name}\nВыберите предмет:", reply_markup=kb)
+
+@router.callback_query(IsAdmin(), F.data.startswith("adm_g_subj:"))
+async def admin_group_subject_status(callback: CallbackQuery):
+    parts = callback.data.split(":")
+    cluster_id = int(parts[1])
+    subj_idx = int(parts[2])
+    
+    group_name = await get_group_by_cluster(cluster_id)
+    subjects = sorted(list(await get_cluster_subjects(cluster_id)))
+    
+    if subj_idx >= len(subjects) or subj_idx < 0:
+         await callback.answer("Ошибка: предмет не найден")
+         return
+         
+    subject = subjects[subj_idx]
+    statuses = await get_subject_status_in_cluster(cluster_id, subject)
+    
+    lines = [f"📊 *Статусы по {subject} ({group_name}):*"]
+    for s in statuses:
+        lines.append(f"• `{s['record_book']}`: {s['status']} ({s['mark']})")
+        
+    text = "\n".join(lines)
+    from aiogram.types import InlineKeyboardButton
+    from aiogram.utils.keyboard import InlineKeyboardBuilder
+    back_kb = InlineKeyboardBuilder().row(InlineKeyboardButton(text="⬅️ Назад к предметам", callback_data=f"adm_g_act_subj:{cluster_id}")).as_markup()
+    
+    if len(text) > 4000:
+        text = text[:4000] + "\n... (слишком длинно)"
+        
+    await callback.message.edit_text(text, parse_mode="Markdown", reply_markup=back_kb)
+
+@router.callback_query(IsAdmin(), F.data.startswith("adm_g_act_rec:"))
+async def admin_group_record_books_list(callback: CallbackQuery):
+    cluster_id = int(callback.data.split(":")[1])
+    group_name = await get_group_by_cluster(cluster_id)
+    record_books = await get_record_books_in_cluster(cluster_id)
+    
+    kb = get_admin_group_record_books_keyboard(cluster_id, record_books, page=0)
+    await callback.message.edit_text(f"Группа: {group_name}\nВыберите зачетку:", reply_markup=kb)
+
+@router.callback_query(IsAdmin(), F.data.startswith("adm_g_rec_page:"))
+async def admin_group_record_books_page(callback: CallbackQuery):
+    parts = callback.data.split(":")
+    cluster_id = int(parts[1])
+    page = int(parts[2])
+    group_name = await get_group_by_cluster(cluster_id)
+    record_books = await get_record_books_in_cluster(cluster_id)
+    
+    kb = get_admin_group_record_books_keyboard(cluster_id, record_books, page=page)
+    await callback.message.edit_text(f"Группа: {group_name}\nВыберите зачетку:", reply_markup=kb)
+
+@router.callback_query(IsAdmin(), F.data.startswith("adm_g_rec:"))
+async def admin_group_record_book_status(callback: CallbackQuery):
+    parts = callback.data.split(":")
+    cluster_id = int(parts[1])
+    rec_idx = int(parts[2])
+    
+    group_name = await get_group_by_cluster(cluster_id)
+    record_books = await get_record_books_in_cluster(cluster_id)
+    
+    if rec_idx >= len(record_books) or rec_idx < 0:
+         await callback.answer("Ошибка: зачетка не найдена")
+         return
+         
+    rb_data = record_books[rec_idx]
+    rb_num = rb_data['record_book']
+    subjects = await get_record_book_subjects(rb_num)
+    
+    lines = [f"🧾 *Зачетка {rb_num} ({group_name}):*"]
+    for s in subjects:
+        subj_name = s.get('subject', 'Неизвестно')
+        status = s.get('status', 'Неизвестно')
+        mark = s.get('mark', '-')
+        lines.append(f"• {subj_name}: {status} ({mark})")
+        
+    text = "\n".join(lines)
+    from aiogram.types import InlineKeyboardButton
+    from aiogram.utils.keyboard import InlineKeyboardBuilder
+    back_kb = InlineKeyboardBuilder().row(InlineKeyboardButton(text="⬅️ Назад к зачеткам", callback_data=f"adm_g_act_rec:{cluster_id}")).as_markup()
+    
+    if len(text) > 4000:
+        text = text[:4000] + "\n... (слишком длинно)"
+        
+    await callback.message.edit_text(text, parse_mode="Markdown", reply_markup=back_kb)

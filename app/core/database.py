@@ -581,10 +581,15 @@ async def get_expelled_statistics() -> dict:
     async with db.execute("SELECT COUNT(*) FROM expelled_students") as cursor:
         total = (await cursor.fetchone())[0]
 
+    async with db.execute("SELECT record_book FROM expelled_students ORDER BY record_book") as cursor:
+        rows = await cursor.fetchall()
+        all_record_books = [r[0] for r in rows]
+
     return {
         "since_year_start": since_year_start,
         "since_semester_start": since_semester_start,
-        "total": total
+        "total": total,
+        "all_record_books": all_record_books
     }
 
 
@@ -899,3 +904,66 @@ async def get_records_count_by_year(enrollment_year: int) -> int:
     async with db.execute(query, (enrollment_year,)) as cursor:
         row = await cursor.fetchone()
         return row[0] if row else 0
+
+# --- Данные для админ-панели (статистика по группам) ---
+
+async def get_record_books_in_cluster(cluster_id: int) -> List[dict]:
+    """Возвращает список зачеток в кластере (с их общим pass_rate)."""
+    db = await get_db_connection()
+    async with db.execute(
+        "SELECT record_book, pass_rate, total_subjects, passed_subjects FROM rating_data WHERE cluster_id = ? AND is_expelled = 0 ORDER BY record_book",
+        (cluster_id,)
+    ) as cursor:
+        rows = await cursor.fetchall()
+        return [{"record_book": r[0], "pass_rate": r[1], "total_subjects": r[2], "passed_subjects": r[3]} for r in rows]
+
+async def get_subject_status_in_cluster(cluster_id: int, subject: str) -> List[dict]:
+    """Возвращает статусы зачеток кластера по конкретному предмету."""
+    db = await get_db_connection()
+    async with db.execute(
+        "SELECT record_book, subjects_json FROM rating_data WHERE cluster_id = ? AND is_expelled = 0 ORDER BY record_book",
+        (cluster_id,)
+    ) as cursor:
+        rows = await cursor.fetchall()
+        
+    result = []
+    for row in rows:
+        rb = row[0]
+        subj_json = row[1]
+        if not subj_json:
+            continue
+        try:
+            subjects = json.loads(subj_json)
+            subj_data = next((s for s in subjects if s.get("subject") == subject), None)
+            if subj_data:
+                result.append({
+                    "record_book": rb,
+                    "status": subj_data.get("status", "Неизвестно"),
+                    "mark": subj_data.get("mark", "Нет оценки")
+                })
+            else:
+                result.append({
+                    "record_book": rb,
+                    "status": "Нет в профиле",
+                    "mark": "-"
+                })
+        except json.JSONDecodeError:
+            pass
+            
+    return result
+
+async def get_record_book_subjects(record_book: str) -> List[dict]:
+    """Возвращает список предметов и их статусы для зачетки."""
+    db = await get_db_connection()
+    async with db.execute(
+        "SELECT subjects_json FROM rating_data WHERE record_book = ?",
+        (record_book,)
+    ) as cursor:
+        row = await cursor.fetchone()
+        if not row or not row[0]:
+            return []
+        try:
+            return json.loads(row[0])
+        except json.JSONDecodeError:
+            return []
+
