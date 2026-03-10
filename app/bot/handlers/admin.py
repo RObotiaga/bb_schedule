@@ -81,31 +81,40 @@ async def admin_update_rating(message: Message):
         logging.exception("Ошибка при обвалвлении рейтинга")
         await message.answer(f"❌ Ошибка при обновлении рейтинга: {e}", reply_markup=admin_keyboard)
 
+import gzip
+
 @router.message(IsAdmin(), F.text == "📤 Экспорт рейтинга")
 async def admin_export_rating(message: Message):
     await message.answer("📤 Подготавливаю экспорт рейтинга...")
     try:
         json_data = await export_rating_data()
-        file = BufferedInputFile(json_data.encode("utf-8"), filename="rating_export.json")
-        await message.answer_document(file, caption="✅ Экспорт рейтинга завершен.")
+        compressed_data = gzip.compress(json_data.encode("utf-8"))
+        file = BufferedInputFile(compressed_data, filename="rating_export.json.gz")
+        await message.answer_document(file, caption="✅ Экспорт рейтинга завершен (сжат gzip).")
     except Exception as e:
         logging.exception("Ошибка при экспорте рейтинга")
         await message.answer(f"❌ Ошибка при экспорте: {e}")
 
 @router.message(IsAdmin(), F.text == "📥 Импорт рейтинга")
 async def admin_import_rating_start(message: Message):
-    await message.answer("📥 Пожалуйста, отправьте JSON-файл с данными рейтинга.")
+    await message.answer("📥 Пожалуйста, отправьте файл (.json или .json.gz) с данными рейтинга.")
 
 @router.message(IsAdmin(), F.document)
 async def admin_import_rating_file(message: Message):
-    if not message.document.file_name.endswith(".json"):
+    filename = message.document.file_name or ""
+    if not (filename.endswith(".json") or filename.endswith(".gz")):
         return
 
     status_msg = await message.answer("📥 Обработка файла...")
     try:
         file_info = await message.bot.get_file(message.document.file_id)
         file_content = await message.bot.download_file(file_info.file_path)
-        json_data = file_content.read().decode("utf-8")
+        raw_data = file_content.read()
+        
+        if filename.endswith(".gz"):
+            raw_data = gzip.decompress(raw_data)
+            
+        json_data = raw_data.decode("utf-8")
         
         success = await import_rating_data(json_data)
         if success:
