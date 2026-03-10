@@ -146,7 +146,8 @@ async def admin_expelled_statistics(message: Message):
             text += "\n\nСписок отчисленных пуст."
             await message.answer(text, parse_mode="Markdown")
         else:
-            list_text = ", ".join(f"`{rb}`" for rb in record_books)
+            from app.bot.fio_mapping import get_fio_by_record_book
+            list_text = "\n".join(f"• `{get_fio_by_record_book(rb)}`" for rb in record_books)
             # Если текст со списком помещается в лимит Telegram (4096), отправляем прямо в сообщении
             if len(text) + len(list_text) < 3800:
                 text += "\n\n📋 *Список зачеток:*\n" + list_text
@@ -156,7 +157,7 @@ async def admin_expelled_statistics(message: Message):
                 await message.answer(text, parse_mode="Markdown")
                 
                 from aiogram.types import BufferedInputFile
-                file_content = "\n".join(record_books).encode('utf-8')
+                file_content = "\n".join(get_fio_by_record_book(rb) for rb in record_books).encode('utf-8')
                 doc = BufferedInputFile(file_content, filename="expelled_students.txt")
                 await message.answer_document(doc, caption="Список зачеток отчисленных")
     except Exception as e:
@@ -277,9 +278,11 @@ async def admin_group_subject_status(callback: CallbackQuery):
     subject = subjects[subj_idx]
     statuses = await get_subject_status_in_cluster(cluster_id, subject)
     
+    from app.bot.fio_mapping import get_fio_by_record_book
     lines = [f"📊 *Статусы по {subject} ({group_name}):*"]
     for s in statuses:
-        lines.append(f"• `{s['record_book']}`: {s['status']} ({s['mark']})")
+        fio_str = get_fio_by_record_book(s['record_book'])
+        lines.append(f"• `{fio_str}`: {s['status']} ({s['mark']})")
         
     text = "\n".join(lines)
     from aiogram.types import InlineKeyboardButton
@@ -324,11 +327,13 @@ async def admin_group_record_book_status(callback: CallbackQuery):
          await callback.answer("Ошибка: зачетка не найдена")
          return
          
+    from app.bot.fio_mapping import get_fio_by_record_book
     rb_data = record_books[rec_idx]
     rb_num = rb_data['record_book']
     subjects = await get_record_book_subjects(rb_num)
     
-    lines = [f"🧾 *Зачетка {rb_num} ({group_name}):*"]
+    fio_str = get_fio_by_record_book(rb_num)
+    lines = [f"🧾 *Зачетка {fio_str} ({group_name}):*"]
     for s in subjects:
         subj_name = s.get('subject', 'Неизвестно')
         status = s.get('status', 'Неизвестно')

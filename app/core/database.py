@@ -775,19 +775,23 @@ async def get_all_distinct_clusters() -> List[int]:
         rows = await cursor.fetchall()
         return [r[0] for r in rows]
 
-async def get_schedule_groups_subjects() -> Dict[str, set]:
-    """Возвращает {group_name: {subjects...}} из расписания."""
+async def get_schedule_groups_subjects() -> Dict[str, dict]:
+    """Возвращает {group_name: {'course': int, 'subjects': {subjects...}}} из расписания."""
     db = await get_db_connection()
     async with db.execute(
-        "SELECT DISTINCT group_name, subject FROM schedule WHERE subject IS NOT NULL"
+        "SELECT DISTINCT group_name, course, subject FROM schedule WHERE subject IS NOT NULL AND course IS NOT NULL"
     ) as cursor:
         rows = await cursor.fetchall()
-        result: Dict[str, set] = {}
+        result: Dict[str, dict] = {}
         for row in rows:
             group = row[0]
+            try:
+                course = int(row[1])
+            except (ValueError, TypeError):
+                continue
             if group not in result:
-                result[group] = set()
-            result[group].add(row[1])
+                result[group] = {"course": course, "subjects": set()}
+            result[group]["subjects"].add(row[2])
         return result
 
 
@@ -946,10 +950,12 @@ async def get_subject_status_in_cluster(cluster_id: int, subject: str) -> List[d
             subjects = json.loads(subj_json)
             subj_data = next((s for s in subjects if s.get("subject") == subject), None)
             if subj_data:
+                is_passed = subj_data.get("passed", False)
+                grade = subj_data.get("grade", "Нет оценки")
                 result.append({
                     "record_book": rb,
-                    "status": subj_data.get("status", "Неизвестно"),
-                    "mark": subj_data.get("mark", "Нет оценки")
+                    "status": "✅ Сдано" if is_passed else "❌ Не сдано",
+                    "mark": grade
                 })
             else:
                 result.append({

@@ -300,11 +300,13 @@ def get_admin_group_record_books_keyboard(cluster_id: int, record_books: list[di
     end_idx = start_idx + per_page
     current_books = record_books[start_idx:end_idx]
     
+    from app.bot.fio_mapping import get_short_fio_by_record_book
     for i, rb_data in enumerate(current_books):
         actual_idx = start_idx + i
         rb_num = rb_data['record_book']
         pass_rate = rb_data['pass_rate']
-        builder.button(text=f"{rb_num} ({pass_rate:.1f}%)", callback_data=f"adm_g_rec:{cluster_id}:{actual_idx}")
+        display_name = get_short_fio_by_record_book(rb_num)
+        builder.button(text=f"{display_name} ({pass_rate:.1f}%)", callback_data=f"adm_g_rec:{cluster_id}:{actual_idx}")
         
     builder.adjust(2)
     
