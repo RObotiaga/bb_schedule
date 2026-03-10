@@ -7,7 +7,9 @@ from fastapi.staticfiles import StaticFiles
 import uvicorn
 import os
 
-from app.core.database import get_db_connection, load_structure_from_db, get_user_group_db
+from app.core.database import get_db_connection
+from app.core.repositories.schedule import load_structure_from_db
+from app.core.repositories.user import get_user_group_db
 from app.core.state import GlobalState
 from app.core.config import BASE_DIR
 

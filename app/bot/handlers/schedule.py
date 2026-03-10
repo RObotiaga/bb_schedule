@@ -3,7 +3,9 @@ from aiogram.types import Message, CallbackQuery
 from datetime import date, datetime, timedelta
 from typing import List
 
-from app.core.database import get_user_group_db, get_schedule_by_group, get_subscribed_teachers, get_schedule_by_teacher
+from app.core.repositories.user import get_user_group_db
+from app.core.repositories.schedule import get_schedule_by_group, get_schedule_by_teacher
+from app.core.repositories.subject import get_subscribed_teachers
 from app.bot.keyboards import get_faculties_keyboard
 
 router = Router()

@@ -10,7 +10,8 @@ import re
 import time
 from datetime import datetime
 
-from app.core.database import save_rating_record, save_job_log, cleanup_old_job_logs
+from app.core.repositories.rating import save_rating_record
+from app.core.repositories.job_log import save_job_log, cleanup_old_job_logs
 from app.services.rating_scraper import scrape_all_records
 from app.services.clustering import run_clustering
 from app.services.cluster_mapper import map_clusters_to_groups
@@ -68,7 +69,8 @@ async def run_rating_update(bot=None, status_message=None):
     3. Маппинг кластеров на группы расписания
     4. Расчёт статистики преподавателей
     """
-    from app.core.database import save_rating_record, save_job_log, cleanup_old_job_logs, get_last_parsed_num, get_records_count_by_year
+    from app.core.repositories.rating import save_rating_record, get_last_parsed_num, get_records_count_by_year
+    from app.core.repositories.job_log import save_job_log, cleanup_old_job_logs
     from app.core.config import ADMIN_ID, PARSING_YEARS, MAX_CONSECUTIVE_NOT_FOUND
     start_time = datetime.now()
     logging.info(f"🏆 Начало обновления рейтинга: {start_time}...")

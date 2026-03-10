@@ -259,7 +259,7 @@ async def scrape_all_records(
                     current_num += 1
                     record_book = f"{year}{num:04d}"
                     
-                    from app.core.database import is_student_expelled_in_db
+                    from app.core.repositories.rating import is_student_expelled_in_db
                     is_expelled = await is_student_expelled_in_db(record_book)
                     
                     # Ротация User-Agent

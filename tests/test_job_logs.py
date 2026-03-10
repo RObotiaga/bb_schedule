@@ -2,7 +2,7 @@ import pytest
 import aiosqlite
 from datetime import datetime, timezone
 import json
-from app.core.database import save_job_log, get_last_two_job_logs, cleanup_old_job_logs
+from app.core.repositories.job_log import save_job_log, get_last_two_job_logs, cleanup_old_job_logs
 from app.core import database
 
 @pytest.fixture(autouse=True)

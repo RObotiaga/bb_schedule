@@ -3,11 +3,12 @@
 Сопоставляет множества предметов кластера с предметами группы по Жаккару.
 """
 import logging
-from app.core.database import (
-    get_all_distinct_clusters,
+from app.core.repositories.rating import (
+    get_all_rating_records,
     get_cluster_subjects,
     get_schedule_groups_subjects,
     save_cluster_group,
+    get_cluster_size,
 )
 
 # Минимальное сходство для привязки кластера к группе

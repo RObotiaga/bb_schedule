@@ -5,7 +5,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from aiogram.types import InlineKeyboardButton
 
-from app.core.database import get_subjects_with_stats
+from app.core.repositories.subject import get_subjects_with_stats
 from app.bot.keyboards import get_subjects_keyboard
 from app.bot.states import SubjectSearch
 from aiogram.types import InlineKeyboardMarkup
@@ -118,7 +118,7 @@ async def process_subj_select(callback: CallbackQuery, state: FSMContext):
         await callback.answer("Ошибка: не удалось найти предмет.", show_alert=True)
         return
         
-    from app.core.database import get_global_subject_stats
+    from app.core.repositories.subject import get_global_subject_stats
     subject = subjects[idx]
     stats = await get_global_subject_stats(subject)
     

@@ -8,7 +8,7 @@ import re
 from collections import defaultdict
 from typing import List, Dict
 
-from app.core.database import get_all_rating_records, update_rating_cluster, save_expelled_student
+from app.core.repositories.rating import get_all_rating_records, update_rating_cluster, save_expelled_student
 
 # Минимальный процент совпадения предметов для объединения в один кластер
 SIMILARITY_THRESHOLD = 0.80

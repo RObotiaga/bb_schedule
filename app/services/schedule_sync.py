@@ -13,7 +13,7 @@ from bs4 import BeautifulSoup
 
 from app.core.config import DOWNLOAD_DIR, DB_PATH, BB_LOGIN, BB_PASSWORD, BB_URL
 from app.core.logger import setup_logging
-from app.core.database import save_job_log, cleanup_old_job_logs
+from app.core.repositories.job_log import save_job_log, cleanup_old_job_logs
 
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')

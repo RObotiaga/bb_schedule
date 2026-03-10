@@ -3,10 +3,14 @@ from aiogram.types import Message, CallbackQuery
 from aiogram.fsm.context import FSMContext
 from aiogram.utils.keyboard import InlineKeyboardBuilder, InlineKeyboardButton
 
-from app.core.database import (
-    get_record_book_number, save_record_book_number, get_user_settings, 
-    update_user_settings, get_subject_note, save_subject_note,
-    get_student_cluster_info, get_rating_position,
+from app.core.repositories.user import (
+    get_record_book_number, save_record_book_number, get_user_settings, update_user_settings
+)
+from app.core.repositories.subject import (
+    get_subject_note, save_subject_note
+)
+from app.core.repositories.rating import (
+    get_student_cluster_info, get_rating_position
 )
 from app.services.schedule_api import UsurtScraper
 from app.bot.keyboards import (
@@ -149,7 +153,9 @@ def format_results(data: list, settings: dict = None, rating_info: dict | None =
     return "\n".join(output)
 
 async def show_results_view(target: Message | CallbackQuery, user_id: int, record_book_number: str):
-    from app.core.database import get_global_subject_stats, get_cluster_subject_stats, get_rating_position, get_db_connection
+    from app.core.repositories.subject import get_global_subject_stats, get_cluster_subject_stats
+    from app.core.repositories.rating import get_rating_position
+    from app.core.database import get_db_connection
     msg = target if isinstance(target, Message) else target.message
     if isinstance(target, Message):
         msg = await target.answer(f"🔍 Ищу результаты для зачетки: *{record_book_number}*...", parse_mode="Markdown")

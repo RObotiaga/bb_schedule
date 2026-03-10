@@ -4,11 +4,13 @@ from aiogram.types import Message
 from aiogram.filters import Command
 
 from app.core.config import ADMIN_ID
-from app.core.database import (
+from app.core.repositories.user import (
     get_record_book_number,
+    get_users_by_record_book,
+)
+from app.core.repositories.rating import (
     get_student_cluster_info,
     get_top_students,
-    get_users_by_record_book,
 )
 
 router = Router()

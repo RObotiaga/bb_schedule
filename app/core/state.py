@@ -1,4 +1,4 @@
-from app.core.database import load_structure_from_db
+from app.core.repositories.schedule import load_structure_from_db
 
 class GlobalState:
     STRUCTURED_DATA = {}

@@ -4,8 +4,8 @@
 import json
 import logging
 from collections import defaultdict
-from app.core.database import (
-    get_all_rating_records,
+from app.core.repositories.rating import get_all_rating_records
+from app.core.repositories.subject import (
     save_subject_global_stat,
     clear_subject_global_stats,
     save_cluster_subject_stat,

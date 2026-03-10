@@ -11,7 +11,7 @@ from datetime import datetime, timedelta, timezone
 import aiohttp
 from bs4 import BeautifulSoup
 
-from app.core.database import get_cached_session_results, save_cached_session_results
+from app.core.repositories.subject import get_cached_session_results, save_cached_session_results
 from app.services.rating_scraper import scrape_record_book
 
 # Заголовки для имитации браузера

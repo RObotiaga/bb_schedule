@@ -22,6 +22,8 @@ async def test_db_transfer():
         return mem_db
     
     db_module.get_db_connection = get_test_db
+    import app.services.db_transfer
+    app.services.db_transfer.get_db_connection = get_test_db
     
     await initialize_database()
     db = await db_module.get_db_connection()

@@ -2,7 +2,8 @@ import asyncio
 import logging
 from aiogram import Bot
 
-from app.core.database import get_users_with_record_books, get_cached_session_results, save_cached_session_results
+from app.core.repositories.user import get_users_with_record_books
+from app.core.repositories.subject import get_cached_session_results, save_cached_session_results
 from app.services.schedule_api import UsurtScraper
 
 def compare_session_results(old_data: list, new_data: list) -> list[str]:

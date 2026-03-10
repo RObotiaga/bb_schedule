@@ -3,7 +3,7 @@ from aiogram.filters import CommandStart
 from aiogram.types import Message, CallbackQuery
 from aiogram.fsm.context import FSMContext
 
-from app.core.database import get_user_group_db, save_user_group_db
+from app.core.repositories.user import get_user_group_db, save_user_group_db
 from app.bot.keyboards import (
     day_selection_keyboard, get_faculties_keyboard, 
     get_courses_keyboard, get_groups_keyboard, CourseCallbackFactory,

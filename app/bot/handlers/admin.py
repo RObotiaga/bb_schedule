@@ -5,7 +5,7 @@ from app.bot.keyboards import admin_keyboard
 from app.services.schedule_sync import run_full_sync
 from app.services.rating_updater import run_rating_update
 from app.core.state import GlobalState
-from app.core.database import get_last_two_job_logs
+from app.core.repositories.job_log import get_last_two_job_logs
 from app.services.db_transfer import export_rating_data, import_rating_data
 import logging
 import json
@@ -127,7 +127,7 @@ async def admin_import_rating_file(message: Message):
 
 @router.message(IsAdmin(), F.text == "📉 Статистика отчислений")
 async def admin_expelled_statistics(message: Message):
-    from app.core.database import get_expelled_statistics
+    from app.core.repositories.rating import get_expelled_statistics
     
     try:
         stats = await get_expelled_statistics()
@@ -175,8 +175,10 @@ async def admin_panel(message: Message):
 
 # --- Статистика по группам ---
 
-from app.core.database import (
-    get_all_cluster_groups, get_cluster_by_group, get_group_by_cluster, get_cluster_subjects, 
+from app.core.repositories.rating import (
+    get_all_cluster_groups, get_cluster_by_group, get_group_by_cluster, get_cluster_subjects
+)
+from app.core.repositories.subject import (
     get_subject_status_in_cluster, get_record_books_in_cluster, get_record_book_subjects
 )
 from app.bot.keyboards import (
