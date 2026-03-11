@@ -222,6 +222,18 @@ async def get_group_by_cluster(cluster_id: int) -> str | None:
         row = await cursor.fetchone()
         return row[0] if row else None
 
+async def get_group_by_record_book(record_book: str) -> str | None:
+    """record_book → cluster_id → group_name (через JOIN)."""
+    db = await get_db_connection()
+    async with db.execute("""
+        SELECT cg.group_name 
+        FROM rating_data rd
+        JOIN cluster_groups cg ON rd.cluster_id = cg.cluster_id
+        WHERE rd.record_book = ? AND rd.is_expelled = 0
+    """, (record_book,)) as cursor:
+        row = await cursor.fetchone()
+        return row[0] if row else None
+
 async def get_cluster_by_group(group_name: str) -> int | None:
     """Возвращает cluster_id по имени группы."""
     db = await get_db_connection()

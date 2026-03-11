@@ -43,13 +43,15 @@ def filter_results_by_settings(data: list, settings: dict) -> list:
         filtered.append(item)
     return filtered
 
-def format_results(data: list, settings: dict = None, rating_info: dict | None = None, subject_stats: dict | None = None, cluster_subject_stats: dict | None = None) -> str:
+def format_results(data: list, settings: dict = None, rating_info: dict | None = None, subject_stats: dict | None = None, cluster_subject_stats: dict | None = None, teacher_map: dict | None = None) -> str:
     if settings is None:
         settings = {}
     if subject_stats is None:
         subject_stats = {}
     if cluster_subject_stats is None:
         cluster_subject_stats = {}
+    if teacher_map is None:
+        teacher_map = {}
     if not data: return "📭 Результаты не найдены."
     
     filtered_data = filter_results_by_settings(data, settings)
@@ -142,7 +144,22 @@ def format_results(data: list, settings: dict = None, rating_info: dict | None =
                 if subj_name in subject_stats:
                     pass_rate = subject_stats[subj_name]
                     line += f"  |  🌍 Глобально: {pass_rate}%"
-                    
+                
+                # Преподаватели из расписания
+                if subj_name in teacher_map and teacher_map[subj_name]:
+                    # Сокращаем ФИО: "Першин Виталий Константинович, Профессор" → "Першин В.К."
+                    short_names = []
+                    for full in teacher_map[subj_name]:
+                        # Убираем должность после запятой
+                        name_part = full.split(',')[0].strip()
+                        parts = name_part.split()
+                        if len(parts) >= 3:
+                            short_names.append(f"{parts[0]} {parts[1][0]}.{parts[2][0]}.")
+                        elif len(parts) == 2:
+                            short_names.append(f"{parts[0]} {parts[1][0]}.")
+                        else:
+                            short_names.append(name_part)
+                    line += f"\n   👨\u200d🏫 {escape_md(', '.join(short_names))}"
                 if item['date']: line += f" ({escape_md(item['date'])})"
                 semester_lines.append(line)
             
@@ -154,7 +171,8 @@ def format_results(data: list, settings: dict = None, rating_info: dict | None =
 
 async def show_results_view(target: Message | CallbackQuery, user_id: int, record_book_number: str):
     from app.core.repositories.subject import get_global_subject_stats, get_cluster_subject_stats
-    from app.core.repositories.rating import get_rating_position
+    from app.core.repositories.rating import get_rating_position, get_group_by_record_book
+    from app.core.repositories.schedule import get_teachers_for_subject
     from app.core.database import get_db_connection
     msg = target if isinstance(target, Message) else target.message
     if isinstance(target, Message):
@@ -209,7 +227,20 @@ async def show_results_view(target: Message | CallbackQuery, user_id: int, recor
                 if stats:
                     subject_stats[subj_name] = stats["pass_rate"]
         
-        formatted_text = format_results(results_data, settings, rating_info, subject_stats, cluster_subject_stats)
+        # Определяем группу студента и преподавателей
+        teacher_map = {}
+        student_group = await get_group_by_record_book(record_book_number)
+        if student_group:
+            seen_subjects = set()
+            for item in results_data:
+                subj_name = item.get("subject", "").strip()
+                if subj_name and subj_name not in seen_subjects:
+                    seen_subjects.add(subj_name)
+                    teachers = await get_teachers_for_subject(student_group, subj_name)
+                    if teachers:
+                        teacher_map[subj_name] = teachers
+        
+        formatted_text = format_results(results_data, settings, rating_info, subject_stats, cluster_subject_stats, teacher_map)
         if len(formatted_text) > 4000:
             lines = formatted_text.split('\n')
             parts = []

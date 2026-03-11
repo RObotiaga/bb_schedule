@@ -1,5 +1,6 @@
 import json
 import logging
+import re
 from typing import List, Dict, Any, Tuple
 import aiosqlite
 from app.core.database import get_db_connection
@@ -69,3 +70,35 @@ async def delete_last_broadcast_log() -> bool:
             await db.commit()
             return True
         return False
+
+async def get_teachers_for_subject(group_name: str, subject: str) -> List[str]:
+    """
+    Возвращает список уникальных преподавателей для предмета в группе.
+    Сначала ищет в текущем расписании (schedule), затем, если не найдено,
+    использует teacher_stats как запасной источник (исторические данные).
+    """
+    db = await get_db_connection()
+    # Убираем " (Nп/г)" для поиска базового предмета
+    base_subject = re.sub(r'\s*\(\d+\s*п/г\)', '', subject).strip()
+
+    # 1. Ищем в текущем расписании
+    async with db.execute("""
+        SELECT DISTINCT teacher FROM schedule
+        WHERE group_name = ?
+          AND (subject = ? OR subject = ? OR subject LIKE ?)
+          AND teacher IS NOT NULL AND teacher != 'Не указан'
+    """, (group_name, subject, base_subject, base_subject + ' (%п/г)')) as cursor:
+        rows = await cursor.fetchall()
+        if rows:
+            return [r[0] for r in rows]
+
+    # 2. Запасной вариант: teacher_stats (данные прошлых семестров)
+    async with db.execute("""
+        SELECT DISTINCT teacher FROM teacher_stats
+        WHERE group_name = ?
+          AND (subject = ? OR subject = ? OR subject LIKE ?)
+    """, (group_name, subject, base_subject, base_subject + ' (%п/г)')) as cursor:
+        rows = await cursor.fetchall()
+        return [r[0] for r in rows]
+
+
