@@ -120,7 +120,7 @@ async def test_full_user_flow(mock_bot_data, mock_message, mock_callback, mock_s
 
     # === Step 3: Select Course 4 ===
     # User clicks "4 курс". The handler uses CourseCallbackFactory
-    callback_data = CourseCallbackFactory(course_id=4, faculty_id=0)
+    callback_data = CourseCallbackFactory(mode="user", course_id=4, faculty_id=0)
     
     await process_course_choice_factory(mock_callback, callback_data)
     

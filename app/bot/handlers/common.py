@@ -56,7 +56,7 @@ async def process_faculty_choice(callback: CallbackQuery):
     )
     await callback.answer()
 
-@router.callback_query(CourseCallbackFactory.filter())
+@router.callback_query(CourseCallbackFactory.filter(F.mode == "user"))
 async def process_course_choice_factory(callback: CallbackQuery, callback_data: CourseCallbackFactory):
     faculty_name = GlobalState.FACULTIES_LIST[callback_data.faculty_id]
     course_name = str(callback_data.course_id)

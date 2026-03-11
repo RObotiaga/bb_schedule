@@ -1,19 +1,40 @@
-from aiogram.types import ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardButton
+from aiogram.types import ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardButton, InlineKeyboardMarkup
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from aiogram.filters.callback_data import CallbackData
+from typing import Any, Callable
 import logging
 
-# Callback Data Factory
-class CourseCallbackFactory(CallbackData, prefix="course"):
+# --- Callback Data Factory ---
+
+class CourseCallbackFactory(CallbackData, prefix="crs"):
+    mode: str       # "user" | "admin"
     course_id: int
     faculty_id: int
+
+# --- Callback Prefix Mapping ---
+
+CALLBACK_PREFIXES = {
+    "user": {
+        "faculty": "faculty",
+        "back_faculty": "back_to_faculties",
+        "back_courses": "back_to_courses",
+        "group": "group",
+    },
+    "admin": {
+        "faculty": "adm_fac",
+        "back_faculty": "adm_back_fac",
+        "back_courses": "adm_back_crs",
+        "group": "adm_grp_name",
+    },
+}
+
+# --- Static Keyboards ---
 
 def get_welcome_inline_keyboard():
     builder = InlineKeyboardBuilder()
     builder.button(text="✏️ Изменить группу", callback_data="change_group")
     return builder.as_markup()
 
-# Static Keyboards
 day_selection_keyboard = ReplyKeyboardMarkup(
     keyboard=[
         [KeyboardButton(text="Сегодня"), KeyboardButton(text="Завтра")],
@@ -37,74 +58,125 @@ admin_keyboard = ReplyKeyboardMarkup(
     resize_keyboard=True
 )
 
+# --- Pagination Helper ---
 
-# Dynamic Keyboards
+def build_paginated_keyboard(
+    items: list[Any],
+    item_callback: Callable[[int, Any], tuple[str, str]],
+    page: int = 0,
+    per_page: int = 10,
+    nav_callback_prefix: str = "page",
+    back_text: str = "⬅️ Назад",
+    back_callback: str = "back",
+    columns: int = 1,
+) -> InlineKeyboardMarkup:
+    """Generic paginated keyboard builder.
+    
+    Args:
+        items: full list of items to paginate
+        item_callback: function(actual_index, item) -> (display_text, callback_data)
+        page: current page (0-indexed)
+        per_page: items per page
+        nav_callback_prefix: prefix for pagination nav buttons
+        back_text: text for back button
+        back_callback: callback_data for back button
+        columns: number of columns for items
+    """
+    builder = InlineKeyboardBuilder()
+    start_idx = page * per_page
+    end_idx = start_idx + per_page
+    current_items = items[start_idx:end_idx]
+    
+    for i, item in enumerate(current_items):
+        actual_idx = start_idx + i
+        text, cb_data = item_callback(actual_idx, item)
+        builder.button(text=text, callback_data=cb_data)
+    
+    builder.adjust(columns)
+    
+    nav_buttons = []
+    if page > 0:
+        nav_buttons.append(InlineKeyboardButton(text="⬅️ Назад", callback_data=f"{nav_callback_prefix}:{page - 1}"))
+    if end_idx < len(items):
+        nav_buttons.append(InlineKeyboardButton(text="Вперед ➡️", callback_data=f"{nav_callback_prefix}:{page + 1}"))
+    if nav_buttons:
+        builder.row(*nav_buttons)
+    
+    builder.row(InlineKeyboardButton(text=back_text, callback_data=back_callback))
+    return builder.as_markup()
 
-def get_faculties_keyboard(faculties_list: list):
+
+# --- Unified Dynamic Keyboards ---
+
+def get_faculties_keyboard(faculties_list: list, mode: str = "user"):
+    prefix = CALLBACK_PREFIXES[mode]
     builder = InlineKeyboardBuilder()
     if not faculties_list:
         logging.warning("faculties_list is empty in get_faculties_keyboard")
         return builder.as_markup()
-        
     for i, name in enumerate(faculties_list):
-        builder.button(text=name, callback_data=f"faculty:{i}")
+        builder.button(text=name, callback_data=f"{prefix['faculty']}:{i}")
     builder.adjust(2)
     return builder.as_markup()
 
-def get_courses_keyboard(faculty_id: int, faculties_list: list, structured_data: dict):
+
+def get_courses_keyboard(faculty_id: int, faculties_list: list, structured_data: dict, mode: str = "user"):
     if faculty_id < 0 or faculty_id >= len(faculties_list):
         logging.error(f"Invalid faculty_id: {faculty_id}")
         return None
 
-    faculty = faculties_list[faculty_id] 
-    
+    prefix = CALLBACK_PREFIXES[mode]
+    faculty = faculties_list[faculty_id]
     builder = InlineKeyboardBuilder()
-    # Ensure keys are strings, but sort numerically if possible
     raw_courses = structured_data.get(faculty, {}).keys()
     
     def sort_key(c):
         return int(c) if str(c).isdigit() else 99
-        
+    
     courses = sorted(raw_courses, key=sort_key)
     
     if not courses:
-         logging.warning(f"Не найдены курсы для факультета: {faculty}")
-         builder.row(InlineKeyboardButton(text="⬅️ Назад к факультетам", callback_data="back_to_faculties"))
-         return builder.as_markup()
-         
+        logging.warning(f"Не найдены курсы для факультета: {faculty}")
+        builder.row(InlineKeyboardButton(text="⬅️ Назад к факультетам", callback_data=prefix["back_faculty"]))
+        return builder.as_markup()
+    
     for course in courses:
         try:
             course_int = int(course)
         except ValueError:
-             logging.error(f"Не удалось конвертировать курс '{course}' в число. Пропуск.")
-             continue
-             
+            logging.error(f"Не удалось конвертировать курс '{course}' в число. Пропуск.")
+            continue
         builder.button(
             text=f"{course} курс",
-            callback_data=CourseCallbackFactory(course_id=course_int, faculty_id=faculty_id)
+            callback_data=CourseCallbackFactory(mode=mode, course_id=course_int, faculty_id=faculty_id)
         )
-        
+    
     builder.adjust(2)
-    builder.row(InlineKeyboardButton(text="⬅️ Назад к факультетам", callback_data="back_to_faculties"))
+    builder.row(InlineKeyboardButton(text="⬅️ Назад к факультетам", callback_data=prefix["back_faculty"]))
     return builder.as_markup()
 
-def get_groups_keyboard(faculty: str, course: str, faculties_list: list, structured_data: dict):
+
+def get_groups_keyboard(faculty: str, course: str, faculties_list: list, structured_data: dict, mode: str = "user"):
+    prefix = CALLBACK_PREFIXES[mode]
     builder = InlineKeyboardBuilder()
     groups = sorted(structured_data.get(faculty, {}).get(course, []))
     for g in groups:
-        builder.button(text=g, callback_data=f"group:{g}")
+        builder.button(text=g, callback_data=f"{prefix['group']}:{g}")
     builder.adjust(2)
     
     try:
         faculty_id = faculties_list.index(faculty)
     except ValueError:
-        faculty_id = 0 # Fallback
+        faculty_id = 0
     
     builder.row(InlineKeyboardButton(
-        text=f"⬅️ Назад к курсам ({faculty})", 
-        callback_data=f"back_to_courses:{faculty_id}" 
+        text=f"⬅️ Назад к курсам ({faculty})",
+        callback_data=f"{prefix['back_courses']}:{faculty_id}"
     ))
     return builder.as_markup()
+
+
+# --- User-only Keyboards ---
 
 def get_teacher_choices_keyboard(teachers: list):
     builder = InlineKeyboardBuilder()
@@ -121,7 +193,6 @@ def get_teacher_nav_keyboard(current_offset: int, is_subscribed: bool = False):
     else:
         builder.button(text="🔔 Подписаться", callback_data="teacher_sub:subscribe")
     
-
     builder.adjust(2)
     
     row_buttons = [
@@ -149,7 +220,6 @@ def get_settings_keyboard(settings: dict):
         status = "✅" if s.get(key, False) else "❌"
         return InlineKeyboardButton(text=f"{label} {status}", callback_data=f"toggle_setting:{key}")
     
-    # Correct buttons construction
     buttons = [
         btn("hide_5", "Скрыть 'Отлично' (5)"),
         btn("hide_4", "Скрыть 'Хорошо' (4)"),
@@ -166,100 +236,24 @@ def get_settings_keyboard(settings: dict):
     return builder.as_markup()
 
 def get_subjects_keyboard(subjects: list, page: int = 0, per_page: int = 10):
-    builder = InlineKeyboardBuilder()
-    start_idx = page * per_page
-    end_idx = start_idx + per_page
-    
-    current_subjects = subjects[start_idx:end_idx]
-    
-    for i, subj in enumerate(current_subjects):
-        actual_idx = start_idx + i
-        # limit button text length just in case
+    def item_cb(idx, subj):
         display_text = subj[:40] + "..." if len(subj) > 40 else subj
-        builder.button(text=display_text, callback_data=f"subj_select:{actual_idx}")
-        
-    builder.adjust(1)
+        return display_text, f"subj_select:{idx}"
     
-    nav_buttons = []
-    if page > 0:
-        nav_buttons.append(InlineKeyboardButton(text="⬅️ Назад", callback_data=f"subj_page:{page - 1}"))
-    if end_idx < len(subjects):
-        nav_buttons.append(InlineKeyboardButton(text="Вперед ➡️", callback_data=f"subj_page:{page + 1}"))
-        
-    if nav_buttons:
-        builder.row(*nav_buttons)
-        
-    builder.row(InlineKeyboardButton(text="🔍 Поиск предмета", callback_data="subj_search_start"))
-        
-    return builder.as_markup()
+    kb = build_paginated_keyboard(
+        items=subjects,
+        item_callback=item_cb,
+        page=page,
+        per_page=per_page,
+        nav_callback_prefix="subj_page",
+        back_text="🔍 Поиск предмета",
+        back_callback="subj_search_start",
+        columns=1,
+    )
+    return kb
 
 
-# --- Админ: Статистика по группам ---
-
-class AdminCourseCallbackFactory(CallbackData, prefix="adm_crs"):
-    course_id: int
-    faculty_id: int
-
-def get_admin_faculties_keyboard(faculties_list: list):
-    builder = InlineKeyboardBuilder()
-    if not faculties_list:
-        return builder.as_markup()
-        
-    for i, name in enumerate(faculties_list):
-        builder.button(text=name, callback_data=f"adm_fac:{i}")
-    builder.adjust(2)
-    return builder.as_markup()
-
-def get_admin_courses_keyboard(faculty_id: int, faculties_list: list, structured_data: dict):
-    if faculty_id < 0 or faculty_id >= len(faculties_list):
-        return None
-
-    faculty = faculties_list[faculty_id] 
-    
-    builder = InlineKeyboardBuilder()
-    raw_courses = structured_data.get(faculty, {}).keys()
-    
-    def sort_key(c):
-        return int(c) if str(c).isdigit() else 99
-        
-    courses = sorted(raw_courses, key=sort_key)
-    
-    if not courses:
-         builder.row(InlineKeyboardButton(text="⬅️ Назад к факультетам", callback_data="adm_back_fac"))
-         return builder.as_markup()
-         
-    for course in courses:
-        try:
-            course_int = int(course)
-        except ValueError:
-             continue
-             
-        builder.button(
-            text=f"{course} курс",
-            callback_data=AdminCourseCallbackFactory(course_id=course_int, faculty_id=faculty_id)
-        )
-        
-    builder.adjust(2)
-    builder.row(InlineKeyboardButton(text="⬅️ Назад к факультетам", callback_data="adm_back_fac"))
-    return builder.as_markup()
-
-def get_admin_groups_keyboard(faculty: str, course: str, faculties_list: list, structured_data: dict):
-    builder = InlineKeyboardBuilder()
-    groups = sorted(structured_data.get(faculty, {}).get(course, []))
-    for g in groups:
-        builder.button(text=g, callback_data=f"adm_grp_name:{g}")
-    builder.adjust(2)
-    
-    try:
-        faculty_id = faculties_list.index(faculty)
-    except ValueError:
-        faculty_id = 0
-    
-    builder.row(InlineKeyboardButton(
-        text=f"⬅️ Назад к курсам ({faculty})", 
-        callback_data=f"adm_back_crs:{faculty_id}" 
-    ))
-    return builder.as_markup()
+# --- Admin-only Keyboards ---
 
 def get_admin_group_actions_keyboard(cluster_id: int):
     builder = InlineKeyboardBuilder()
@@ -270,54 +264,37 @@ def get_admin_group_actions_keyboard(cluster_id: int):
     return builder.as_markup()
 
 def get_admin_group_subjects_keyboard(cluster_id: int, subjects: list[str], page: int = 0, per_page: int = 10):
-    builder = InlineKeyboardBuilder()
-    start_idx = page * per_page
-    end_idx = start_idx + per_page
-    current_subjects = subjects[start_idx:end_idx]
-    
-    for i, subj in enumerate(current_subjects):
-        actual_idx = start_idx + i
+    def item_cb(idx, subj):
         display_text = subj[:40] + "..." if len(subj) > 40 else subj
-        builder.button(text=display_text, callback_data=f"adm_g_subj:{cluster_id}:{actual_idx}")
-        
-    builder.adjust(1)
+        return display_text, f"adm_g_subj:{cluster_id}:{idx}"
     
-    nav_buttons = []
-    if page > 0:
-        nav_buttons.append(InlineKeyboardButton(text="⬅️ Назад", callback_data=f"adm_g_subj_page:{cluster_id}:{page - 1}"))
-    if end_idx < len(subjects):
-        nav_buttons.append(InlineKeyboardButton(text="Вперед ➡️", callback_data=f"adm_g_subj_page:{cluster_id}:{page + 1}"))
-        
-    if nav_buttons:
-        builder.row(*nav_buttons)
-        
-    builder.row(InlineKeyboardButton(text="⬅️ Назад к действиям", callback_data=f"adm_grp:{cluster_id}"))
-    return builder.as_markup()
+    return build_paginated_keyboard(
+        items=subjects,
+        item_callback=item_cb,
+        page=page,
+        per_page=per_page,
+        nav_callback_prefix=f"adm_g_subj_page:{cluster_id}",
+        back_text="⬅️ Назад к действиям",
+        back_callback=f"adm_grp:{cluster_id}",
+        columns=1,
+    )
 
 def get_admin_group_record_books_keyboard(cluster_id: int, record_books: list[dict], page: int = 0, per_page: int = 15):
-    builder = InlineKeyboardBuilder()
-    start_idx = page * per_page
-    end_idx = start_idx + per_page
-    current_books = record_books[start_idx:end_idx]
-    
     from app.bot.fio_mapping import get_short_fio_by_record_book
-    for i, rb_data in enumerate(current_books):
-        actual_idx = start_idx + i
+    
+    def item_cb(idx, rb_data):
         rb_num = rb_data['record_book']
         pass_rate = rb_data['pass_rate']
         display_name = get_short_fio_by_record_book(rb_num)
-        builder.button(text=f"{display_name} ({pass_rate:.1f}%)", callback_data=f"adm_g_rec:{cluster_id}:{actual_idx}")
-        
-    builder.adjust(2)
+        return f"{display_name} ({pass_rate:.1f}%)", f"adm_g_rec:{cluster_id}:{idx}"
     
-    nav_buttons = []
-    if page > 0:
-        nav_buttons.append(InlineKeyboardButton(text="⬅️ Назад", callback_data=f"adm_g_rec_page:{cluster_id}:{page - 1}"))
-    if end_idx < len(record_books):
-        nav_buttons.append(InlineKeyboardButton(text="Вперед ➡️", callback_data=f"adm_g_rec_page:{cluster_id}:{page + 1}"))
-        
-    if nav_buttons:
-        builder.row(*nav_buttons)
-        
-    builder.row(InlineKeyboardButton(text="⬅️ Назад к действиям", callback_data=f"adm_grp:{cluster_id}"))
-    return builder.as_markup()
+    return build_paginated_keyboard(
+        items=record_books,
+        item_callback=item_cb,
+        page=page,
+        per_page=per_page,
+        nav_callback_prefix=f"adm_g_rec_page:{cluster_id}",
+        back_text="⬅️ Назад к действиям",
+        back_callback=f"adm_grp:{cluster_id}",
+        columns=2,
+    )
