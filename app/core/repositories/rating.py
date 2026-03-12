@@ -235,10 +235,10 @@ async def get_group_by_record_book(record_book: str) -> str | None:
         return row[0] if row else None
 
 async def get_cluster_by_group(group_name: str) -> int | None:
-    """Возвращает cluster_id по имени группы."""
+    """Возвращает cluster_id по имени группы (регистронезависимо)."""
     db = await get_db_connection()
     async with db.execute(
-        "SELECT cluster_id FROM cluster_groups WHERE group_name = ?",
+        "SELECT cluster_id FROM cluster_groups WHERE LOWER(group_name) = LOWER(?)",
         (group_name,),
     ) as cursor:
         row = await cursor.fetchone()

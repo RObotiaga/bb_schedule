@@ -92,7 +92,14 @@ async def map_clusters_to_groups():
                 best_cluster = cluster_id
 
         if best_cluster and best_sim >= MIN_SIMILARITY:
+            # Сохраняем с нормализованным (обычно верхний регистр) именем, 
+            # чтобы избежать проблем с СОТ-412 vs СОт-412
             await save_cluster_group(best_cluster, group_name, round(best_sim, 3))
+            
+            # Если в имени есть кириллица с разным регистром, добавим алиас в верхнем регистре
+            if group_name.upper() != group_name:
+                await save_cluster_group(best_cluster, group_name.upper(), round(best_sim, 3))
+            
             mapped += 1
             logging.debug(
                 f"Группа {group_name} → Кластер #{best_cluster} (сходство {best_sim:.2f})"

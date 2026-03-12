@@ -5,7 +5,7 @@ import os
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-from app.bot.handlers.session import filter_results_by_settings, format_results
+from app.bot.formatter import filter_results_by_settings, format_results
 
 
 # === Helper Functions Tests ===

@@ -7,6 +7,7 @@ from app.services.rating_updater import run_rating_update
 from app.core.state import GlobalState
 from app.core.repositories.job_log import get_last_two_job_logs
 from app.services.db_transfer import export_rating_data, import_rating_data
+from app.bot.formatter import format_results
 import logging
 import json
 import os
@@ -330,24 +331,73 @@ async def admin_group_record_book_status(callback: CallbackQuery):
          return
          
     from app.bot.fio_mapping import get_fio_by_record_book
+    from app.core.repositories.subject import get_global_subject_stats, get_cluster_subject_stats
+    from app.core.repositories.rating import get_rating_position
+    from app.core.repositories.schedule import get_teachers_for_subject
+    
     rb_data = record_books[rec_idx]
     rb_num = rb_data['record_book']
-    subjects = await get_record_book_subjects(rb_num)
     
-    fio_str = get_fio_by_record_book(rb_num)
-    lines = [f"🧾 *Зачетка {fio_str} ({group_name}):*"]
+    # Fetch results data
+    subjects = await get_record_book_subjects(rb_num)
+    if not subjects:
+        await callback.answer("У этой зачетки нет данных по предметам.", show_alert=True)
+        return
+
+    # Fetch rating info
+    rating_info = {}
+    for scope in ["cluster", "year", "all"]:
+        pos = await get_rating_position(rb_num, scope)
+        if pos:
+            rating_info[f"{scope}_pos"] = pos
+    
+    if not rating_info:
+        rating_info = None
+
+    # Fetch subject stats
+    subject_stats = {}
+    cluster_subject_stats = await get_cluster_subject_stats(cluster_id)
+    
     for s in subjects:
-        subj_name = s.get('subject', 'Неизвестно')
-        status = s.get('status', 'Неизвестно')
-        mark = s.get('mark', '-')
-        lines.append(f"• {subj_name}: {status} ({mark})")
-        
-    text = "\n".join(lines)
+        subj_name = s.get("subject", "").strip()
+        if subj_name and subj_name not in subject_stats:
+            stats = await get_global_subject_stats(subj_name)
+            if stats:
+                subject_stats[subj_name] = stats["pass_rate"]
+
+    # Fetch teacher info
+    teacher_map = {}
+    if group_name:
+        seen_subjects = set()
+        for s in subjects:
+            subj_name = s.get("subject", "").strip()
+            if subj_name and subj_name not in seen_subjects:
+                seen_subjects.add(subj_name)
+                teachers = await get_teachers_for_subject(group_name, subj_name)
+                if teachers:
+                    teacher_map[subj_name] = teachers
+
+    # Use shared formatter
+    fio_str = get_fio_by_record_book(rb_num)
+    formatted_text = format_results(
+        subjects, 
+        settings={}, # Admin sees everything
+        rating_info=rating_info,
+        subject_stats=subject_stats,
+        cluster_subject_stats=cluster_subject_stats,
+        teacher_map=teacher_map
+    )
+    
+    header = f"🧾 *Зачетка {fio_str} ({group_name}):*\n"
+    text = header + formatted_text
+    
     from aiogram.types import InlineKeyboardButton
     from aiogram.utils.keyboard import InlineKeyboardBuilder
     back_kb = InlineKeyboardBuilder().row(InlineKeyboardButton(text="⬅️ Назад к зачеткам", callback_data=f"adm_g_act_rec:{cluster_id}")).as_markup()
     
     if len(text) > 4000:
+        # Split message if it's too long, but for simplicity here we just truncate or attach as file if needed.
+        # However, for admin view, truncation is usually acceptable unless requested otherwise.
         text = text[:4000] + "\n... (слишком длинно)"
         
     await callback.message.edit_text(text, parse_mode="Markdown", reply_markup=back_kb)
