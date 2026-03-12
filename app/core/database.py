@@ -165,8 +165,8 @@ async def initialize_database():
     # Маппинг кластеров на реальные группы расписания
     await db.execute("""
         CREATE TABLE IF NOT EXISTS cluster_groups (
-            cluster_id INTEGER PRIMARY KEY,
-            group_name TEXT NOT NULL,
+            group_name TEXT PRIMARY KEY,
+            cluster_id INTEGER NOT NULL,
             similarity REAL DEFAULT 0.0
         )
     """)

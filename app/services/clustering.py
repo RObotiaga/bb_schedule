@@ -98,42 +98,20 @@ def cluster_students(records: List[dict], base_year: int = 0) -> Dict[str, int]:
 
 def detect_expelled(records: List[dict], clusters: Dict[str, int]) -> Dict[str, bool]:
     """
-    Определяет отчисленных студентов по комбинированному критерию:
-    1. Нет предметов за текущий учебный год
-    2. Количество предметов значительно ниже медианы кластера (< 50%)
+    Определяет отчисленных студентов по критерию:
+    - Нет предметов за текущий учебный год
     
     Returns: {record_book: is_expelled}
     """
-    # Считаем медиану предметов по кластерам
-    cluster_counts = defaultdict(list)
-    record_map = {r["record_book"]: r for r in records}
-
-    for book, cid in clusters.items():
-        rec = record_map.get(book)
-        if rec:
-            cluster_counts[cid].append(rec.get("total_subjects", 0))
-
-    cluster_medians = {}
-    for cid, counts in cluster_counts.items():
-        sorted_counts = sorted(counts)
-        mid = len(sorted_counts) // 2
-        cluster_medians[cid] = sorted_counts[mid] if sorted_counts else 0
-
     expelled = {}
     for rec in records:
         book = rec["record_book"]
-        cid = clusters.get(book)
-        total = rec.get("total_subjects", 0)
-
-        # Критерий 1: нет предметов за текущий год
+        
+        # Критерий: нет предметов за текущий год
         has_current = _has_current_year_subjects(rec.get("subjects_json", "[]"))
-
-        # Критерий 2: количество предметов < 50% медианы кластера
-        median = cluster_medians.get(cid, 0) if cid else 0
-        below_median = total < median * 0.5 if median > 0 else False
-
-        # Комбо: оба критерия должны совпасть
-        expelled[book] = not has_current and below_median
+        
+        # Теперь этого достаточно
+        expelled[book] = not has_current
 
     expelled_count = sum(1 for v in expelled.values() if v)
     logging.info(f"Определение отчислений: {expelled_count} из {len(expelled)} отчислены")

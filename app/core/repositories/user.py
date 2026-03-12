@@ -73,9 +73,4 @@ async def get_users_by_record_book(record_book: str) -> List[dict]:
         rows = await cursor.fetchall()
         return [{"user_id": r[0], "username": r[1], "first_name": r[2]} for r in rows]
 
-async def get_all_courses() -> List[str]:
-    """Возвращает отсортированный список уникальных курсов."""
-    db = await get_db_connection()
-    cursor = await db.execute("SELECT DISTINCT course FROM schedule ORDER BY course")
-    rows = await cursor.fetchall()
-    return [row[0] for row in rows]
+

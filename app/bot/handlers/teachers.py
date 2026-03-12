@@ -6,7 +6,7 @@ from datetime import date, datetime, timedelta
 import asyncio
 
 from app.core.repositories.schedule import get_schedule_by_teacher
-from app.core.repositories.user import get_all_courses, get_record_book_number
+from app.core.repositories.user import get_record_book_number
 from app.core.repositories.rating import get_student_cluster_info
 from app.core.repositories.subject import (
     get_teacher_subject_rank,

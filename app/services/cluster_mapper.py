@@ -47,37 +47,40 @@ def _similarity(cluster_subjects: set, group_subjects: set) -> float:
 
 async def map_clusters_to_groups():
     """
-    Для каждого кластера ищет ближайшую группу расписания.
+    Для каждой группы расписания ищет наиболее подходящий кластер из rating_data.
     Сохраняет результат в cluster_groups.
     """
-    cluster_ids = await get_all_distinct_clusters()
-    if not cluster_ids:
-        logging.warning("Нет кластеров для маппинга")
-        return
-
     # Собираем предметы каждой группы расписания
     group_subjects = await get_schedule_groups_subjects()
     if not group_subjects:
         logging.warning("Нет данных расписания для маппинга")
         return
 
-    mapped = 0
-    for cluster_id in cluster_ids:
-        cluster_subj = await get_cluster_subjects(cluster_id)
-        if not cluster_subj:
-            continue
+    # Получаем все доступные кластеры
+    cluster_ids = await get_all_distinct_clusters()
+    if not cluster_ids:
+        logging.warning("Нет кластеров для маппинга")
+        return
 
-        # Ищем группу с максимальным сходством
-        best_group = None
+    # Предзагружаем предметы всех кластеров для скорости
+    cluster_data = {}
+    for cid in cluster_ids:
+        subj = await get_cluster_subjects(cid)
+        if subj:
+            cluster_data[cid] = subj
+
+    mapped = 0
+    for group_name, group_data in group_subjects.items():
+        group_course = group_data["course"]
+        group_subj = group_data["subjects"]
+        
+        best_cluster = None
         best_sim = 0.0
 
-        for group_name, group_data in group_subjects.items():
-            group_course = group_data["course"]
-            group_subj = group_data["subjects"]
-            
+        for cluster_id, cluster_subj in cluster_data.items():
             # В текущем учебном году (2025/2026), 
-            # курс студента = 2026 - год поступления
-            # Если cluster_id = 2022001 -> год поступления = 2022 -> курс = 4
+            # ожидаемый курс студента = 2026 - год поступления
+            # Если cluster_id = 2022xxx -> год поступления = 2022 -> курс = 4
             expected_course = 2026 - (cluster_id // 1000)
             
             if group_course != expected_course:
@@ -86,15 +89,15 @@ async def map_clusters_to_groups():
             sim = _similarity(cluster_subj, group_subj)
             if sim > best_sim:
                 best_sim = sim
-                best_group = group_name
+                best_cluster = cluster_id
 
-        if best_group and best_sim >= MIN_SIMILARITY:
-            await save_cluster_group(cluster_id, best_group, round(best_sim, 3))
+        if best_cluster and best_sim >= MIN_SIMILARITY:
+            await save_cluster_group(best_cluster, group_name, round(best_sim, 3))
             mapped += 1
             logging.debug(
-                f"Кластер #{cluster_id} → {best_group} (сходство {best_sim:.2f})"
+                f"Группа {group_name} → Кластер #{best_cluster} (сходство {best_sim:.2f})"
             )
 
     logging.info(
-        f"Маппинг кластеров: {mapped}/{len(cluster_ids)} привязано к группам"
+        f"Маппинг кластеров: {mapped} групп привязано к кластерам"
     )

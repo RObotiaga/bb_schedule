@@ -204,19 +204,19 @@ async def save_cluster_group(cluster_id: int, group_name: str, similarity: float
     """Сохраняет связь кластера с группой расписания."""
     db = await get_db_connection()
     await db.execute("""
-        INSERT INTO cluster_groups (cluster_id, group_name, similarity)
+        INSERT INTO cluster_groups (group_name, cluster_id, similarity)
         VALUES (?, ?, ?)
-        ON CONFLICT(cluster_id) DO UPDATE SET
-            group_name=excluded.group_name,
+        ON CONFLICT(group_name) DO UPDATE SET
+            cluster_id=excluded.cluster_id,
             similarity=excluded.similarity
-    """, (cluster_id, group_name, similarity))
+    """, (group_name, cluster_id, similarity))
     await db.commit()
 
 async def get_group_by_cluster(cluster_id: int) -> str | None:
     """Возвращает имя группы по cluster_id."""
     db = await get_db_connection()
     async with db.execute(
-        "SELECT group_name FROM cluster_groups WHERE cluster_id = ?",
+        "SELECT group_name FROM cluster_groups WHERE cluster_id = ? LIMIT 1",
         (cluster_id,),
     ) as cursor:
         row = await cursor.fetchone()

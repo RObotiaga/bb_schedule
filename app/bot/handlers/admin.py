@@ -186,7 +186,7 @@ from app.bot.keyboards import (
     get_admin_group_actions_keyboard, get_admin_group_subjects_keyboard, get_admin_group_record_books_keyboard,
     CourseCallbackFactory
 )
-from app.core.state import GlobalState
+
 
 @router.message(IsAdmin(), F.text == "👥 Группы")
 async def admin_groups_list(message: Message):
