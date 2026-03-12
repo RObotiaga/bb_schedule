@@ -5,6 +5,7 @@
 import logging
 from app.core.repositories.rating import (
     get_all_rating_records,
+    get_all_distinct_clusters,
     get_cluster_subjects,
     get_schedule_groups_subjects,
     save_cluster_group,
