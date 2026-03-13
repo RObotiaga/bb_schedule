@@ -203,13 +203,10 @@ async def get_cluster_size(cluster_id: int) -> int:
 async def save_cluster_group(cluster_id: int, group_name: str, similarity: float):
     """Сохраняет связь кластера с группой расписания."""
     db = await get_db_connection()
-    await db.execute("""
-        INSERT INTO cluster_groups (group_name, cluster_id, similarity)
-        VALUES (?, ?, ?)
-        ON CONFLICT(group_name) DO UPDATE SET
-            cluster_id=excluded.cluster_id,
-            similarity=excluded.similarity
-    """, (group_name, cluster_id, similarity))
+    await db.execute(
+        "INSERT OR REPLACE INTO cluster_groups (group_name, cluster_id, similarity) VALUES (?, ?, ?)",
+        (group_name, cluster_id, similarity),
+    )
     await db.commit()
 
 async def get_group_by_cluster(cluster_id: int) -> str | None:
