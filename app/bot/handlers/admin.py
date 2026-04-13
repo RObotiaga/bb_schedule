@@ -1,7 +1,12 @@
 from aiogram import Router, F
 from aiogram.types import Message, BufferedInputFile, CallbackQuery
 from app.bot.filters import IsAdmin
-from app.bot.keyboards import admin_keyboard
+from app.bot.keyboards import admin_keyboard, broadcast_cancel_keyboard
+from aiogram.fsm.context import FSMContext
+from app.bot.states import Broadcast
+from app.core.repositories.user import get_all_user_ids
+from aiogram.exceptions import TelegramAPIError
+import asyncio
 from app.services.schedule_sync import run_full_sync
 from app.services.rating_updater import run_rating_update
 from app.core.state import GlobalState
@@ -401,3 +406,45 @@ async def admin_group_record_book_status(callback: CallbackQuery):
         text = text[:4000] + "\n... (слишком длинно)"
         
     await callback.message.edit_text(text, parse_mode="Markdown", reply_markup=back_kb)
+
+# --- Рассылка (Broadcast) ---
+
+@router.message(IsAdmin(), F.text == "📢 Рассылка")
+async def admin_broadcast_start(message: Message, state: FSMContext):
+    await state.set_state(Broadcast.waiting_for_message)
+    await message.answer(
+        "📝 Введите сообщение для рассылки всем пользователям, или отправьте фото/видео/документ с подписью.\n\nДля отмены нажмите кнопку ниже.",
+        reply_markup=broadcast_cancel_keyboard
+    )
+
+@router.message(IsAdmin(), F.text == "Отмена рассылки", Broadcast.waiting_for_message)
+async def admin_broadcast_cancel(message: Message, state: FSMContext):
+    await state.clear()
+    await message.answer("❌ Рассылка отменена.", reply_markup=admin_keyboard)
+
+@router.message(IsAdmin(), Broadcast.waiting_for_message)
+async def admin_broadcast_send(message: Message, state: FSMContext):
+    await state.clear()
+    users = await get_all_user_ids()
+    if not users:
+         await message.answer("Нет зарегистрированных пользователей для рассылки.", reply_markup=admin_keyboard)
+         return
+         
+    status_msg = await message.answer(f"🚀 Начинаю рассылку для {len(users)} пользователей...", reply_markup=admin_keyboard)
+    
+    success = 0
+    failed = 0
+    
+    for user_id in users:
+        try:
+            await message.copy_to(chat_id=user_id)
+            success += 1
+        except TelegramAPIError:
+            failed += 1
+        except Exception as e:
+            logging.error(f"Error sending broadcast to {user_id}: {e}")
+            failed += 1
+            
+        await asyncio.sleep(0.05) # Rate limiting protection
+
+    await status_msg.edit_text(f"✅ Рассылка завершена!\n\nУспешно: {success}\nНе удалось: {failed}")

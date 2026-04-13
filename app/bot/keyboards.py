@@ -53,7 +53,15 @@ admin_keyboard = ReplyKeyboardMarkup(
         [KeyboardButton(text="🏆 Обновить рейтинг")],
         [KeyboardButton(text="📤 Экспорт рейтинга"), KeyboardButton(text="📥 Импорт рейтинга")],
         [KeyboardButton(text="👥 Группы"), KeyboardButton(text="📉 Статистика отчислений")],
+        [KeyboardButton(text="📢 Рассылка")],
         [KeyboardButton(text="⬅️ Выйти из админ-панели")]
+    ],
+    resize_keyboard=True
+)
+
+broadcast_cancel_keyboard = ReplyKeyboardMarkup(
+    keyboard=[
+        [KeyboardButton(text="Отмена рассылки")]
     ],
     resize_keyboard=True
 )
