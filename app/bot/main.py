@@ -75,6 +75,9 @@ async def start_bot():
     from app.services.rating_updater import run_rating_update
     scheduler.add_job(run_rating_update, 'cron', hour=2, minute=0, args=[bot])
     
+    from app.services.backup import send_db_backup
+    scheduler.add_job(send_db_backup, 'cron', hour=20, minute=0, args=[bot])
+    
     scheduler.start()
     from aiogram.types import BotCommand
     commands = [

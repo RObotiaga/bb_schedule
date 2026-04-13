@@ -448,3 +448,52 @@ async def admin_broadcast_send(message: Message, state: FSMContext):
         await asyncio.sleep(0.05) # Rate limiting protection
 
     await status_msg.edit_text(f"✅ Рассылка завершена!\n\nУспешно: {success}\nНе удалось: {failed}")
+
+# --- Импорт базы данных (Бэкапа) ---
+
+from app.bot.states import DatabaseBackup
+from app.core.database import close_db_connection, initialize_database
+from app.core.config import DB_PATH
+
+@router.message(IsAdmin(), F.text == "📥 Загрузить БД")
+async def admin_import_db_start(message: Message, state: FSMContext):
+    await state.set_state(DatabaseBackup.waiting_for_db_file)
+    await message.answer(
+        "📝 Пожалуйста, отправьте файл БД (schedule.db).\n\nДля отмены нажмите 'Отмена рассылки', либо отправьте любое текстовое сообщение \"Отмена\".",
+        reply_markup=broadcast_cancel_keyboard
+    )
+
+@router.message(IsAdmin(), F.document, DatabaseBackup.waiting_for_db_file)
+async def admin_import_db_file(message: Message, state: FSMContext):
+    filename = message.document.file_name or ""
+    if not filename.endswith(".db"):
+        await message.answer("❌ Файл должен иметь расширение .db. Отправьте файл .db или напишите 'Отмена'.")
+        return
+        
+    status_msg = await message.answer("📥 Загрузка новой БД...", reply_markup=admin_keyboard)
+    try:
+        file_info = await message.bot.get_file(message.document.file_id)
+        
+        # Обязательно закрываем соединения, чтобы освободить файл
+        await close_db_connection()
+        
+        # Скачиваем файл с тем же именем поверх старого
+        await message.bot.download_file(file_info.file_path, destination=DB_PATH)
+        
+        # Инициализируем БД заново
+        await initialize_database()
+        from app.core.state import GlobalState
+        await GlobalState.reload()
+        
+        await state.clear()
+        await status_msg.edit_text("✅ База данных успешно обновлена и инициализирована!")
+    except Exception as e:
+        logging.exception("Ошибка при импорте БД")
+        await initialize_database() # Пытаемся восстановить подключение
+        await status_msg.edit_text(f"❌ Возникла ошибка при импорте: {e}")
+
+@router.message(IsAdmin(), F.text, DatabaseBackup.waiting_for_db_file)
+async def admin_import_db_cancel(message: Message, state: FSMContext):
+    await state.clear()
+    await message.answer("❌ Загрузка БД отменена.", reply_markup=admin_keyboard)
+

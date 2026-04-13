@@ -18,3 +18,6 @@ class ChecklistAdd(StatesGroup):
 
 class SubjectSearch(StatesGroup):
     waiting_for_subject_name = State()
+
+class DatabaseBackup(StatesGroup):
+    waiting_for_db_file = State()
