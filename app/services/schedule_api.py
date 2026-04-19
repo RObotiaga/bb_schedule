@@ -23,7 +23,7 @@ _DEFAULT_HEADERS = {
 
 
 class UsurtScraper:
-    BASE_URL = "http://report.usurt.ru/uspev.aspx"
+    BASE_URL = "https://report.usurt.ru/uspev.aspx"
 
     @staticmethod
     async def get_session_results(

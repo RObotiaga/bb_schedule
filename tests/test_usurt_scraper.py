@@ -7,6 +7,7 @@ import os
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 from app.services.schedule_api import UsurtScraper
+from app.services.rating_scraper import _is_session_expired, _parse_html_results
 
 
 @pytest.mark.asyncio
@@ -112,6 +113,48 @@ async def test_empty_subject_filtering():
     assert len(filtered) == 2
     assert "Математика" in filtered
     assert "Физика" in filtered
+
+
+def test_detect_expired_aspnet_session():
+    html = """
+    <html>
+        <body>
+            <span id="ReportViewer1">ASP.NET session has expired</span>
+        </body>
+    </html>
+    """
+    assert _is_session_expired(html) is True
+
+
+def test_parse_html_results_current_report_layout():
+    html = """
+    <table>
+        <tr>
+            <td>2022/2023</td><td>&nbsp;</td><td>&nbsp;</td>
+        </tr>
+        <tr>
+            <td>&nbsp;</td><td>1</td><td>&nbsp;</td>
+        </tr>
+        <tr>
+            <td>&nbsp;</td><td>&nbsp;</td><td>1</td>
+        </tr>
+        <tr>
+            <td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>Математика</td><td>Отлично</td>
+        </tr>
+        <tr>
+            <td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>Физика</td><td>Недопуск</td>
+        </tr>
+    </table>
+    """
+    results = _parse_html_results(html)
+    assert len(results) == 2
+    assert results[0]["semester"] == "1 семестр (2022/2023)"
+    assert results[0]["subject"] == "Математика"
+    assert results[0]["grade"] == "Отлично"
+    assert results[0]["grade_value"] == 5
+    assert results[0]["passed"] is True
+    assert results[1]["subject"] == "Физика"
+    assert results[1]["passed"] is False
 
 
 # === Integration Tests with Mocks ===

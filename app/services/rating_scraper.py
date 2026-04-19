@@ -11,7 +11,7 @@ from typing import List, Dict, Any, Optional
 import aiohttp
 from bs4 import BeautifulSoup
 
-BASE_URL = "http://report.usurt.ru/uspev.aspx"
+BASE_URL = "https://report.usurt.ru/uspev.aspx"
 
 # Ротация User-Agent для снижения заметности
 USER_AGENTS = [
@@ -26,6 +26,8 @@ GRADE_KEYWORDS = [
     "отлично", "хорошо", "удовлетворительно", "неудовлетворительно",
     "зачтено", "незачет", "недопуск", "не явился",
 ]
+
+SESSION_EXPIRED_MARKERS = ("asp.net session has expired",)
 
 
 def _extract_asp_fields(html: str) -> dict:
@@ -163,6 +165,12 @@ def _parse_html_results(html: str) -> List[Dict[str, Any]]:
     return results
 
 
+def _is_session_expired(html: str) -> bool:
+    """Проверяет, вернул ли сервер страницу с истекшей ASP.NET-сессией."""
+    html_lower = html.lower()
+    return any(marker in html_lower for marker in SESSION_EXPIRED_MARKERS)
+
+
 async def scrape_record_book(
     session: aiohttp.ClientSession,
     record_book_number: str,
@@ -172,36 +180,48 @@ async def scrape_record_book(
     Returns: (status, data) — совместимо с UsurtScraper.get_session_results().
     """
     try:
-        # Шаг 1: GET для ASP.NET токенов
-        async with session.get(BASE_URL) as resp:
-            if resp.status != 200:
-                return "ERROR", None
-            html = await resp.text()
+        for attempt in range(2):
+            # Шаг 1: GET для ASP.NET токенов
+            async with session.get(BASE_URL) as resp:
+                if resp.status != 200:
+                    return "ERROR", None
+                html = await resp.text()
 
-        asp_fields = _extract_asp_fields(html)
-        if not asp_fields.get("__VIEWSTATE"):
-            logging.warning(f"Не найден __VIEWSTATE для {record_book_number}")
+            asp_fields = _extract_asp_fields(html)
+            if not asp_fields.get("__VIEWSTATE"):
+                logging.warning(f"Не найден __VIEWSTATE для {record_book_number}")
+                return "ERROR", None
+
+            # Шаг 2: POST с номером зачётки
+            post_data = {**asp_fields}
+            post_data["ReportViewer1$ctl00$ctl03$ctl00"] = record_book_number
+            post_data["ReportViewer1$ctl00$ctl00"] = "Просмотр"
+
+            async with session.post(BASE_URL, data=post_data) as resp:
+                if resp.status != 200:
+                    return "ERROR", None
+                html = await resp.text()
+
+            if _is_session_expired(html):
+                logging.warning(
+                    "Истекла ASP.NET-сессия при парсинге зачётки %s, повтор %s/2",
+                    record_book_number,
+                    attempt + 1,
+                )
+                continue
+
+            # Шаг 3: Проверка и парсинг
+            if "не найден" in html.lower() or ("Дисциплина" not in html and "Error" in html):
+                return "NOT_FOUND", None
+
+            results = _parse_html_results(html)
+            if results:
+                return "SUCCESS", results
+
+            logging.warning("Пустой ответ от report.usurt.ru для зачётки %s", record_book_number)
             return "ERROR", None
 
-        # Шаг 2: POST с номером зачётки
-        post_data = {**asp_fields}
-        post_data["ReportViewer1$ctl00$ctl03$ctl00"] = record_book_number
-        post_data["ReportViewer1$ctl00$ctl00"] = "Просмотр"
-
-        async with session.post(BASE_URL, data=post_data) as resp:
-            if resp.status != 200:
-                return "ERROR", None
-            html = await resp.text()
-
-        # Шаг 3: Проверка и парсинг
-        if "не найден" in html.lower() or ("Дисциплина" not in html and "Error" in html):
-            return "NOT_FOUND", None
-
-        results = _parse_html_results(html)
-        if not results:
-            return "NOT_FOUND", None
-
-        return "SUCCESS", results
+        return "ERROR", None
 
     except asyncio.TimeoutError:
         logging.warning(f"Таймаут при парсинге {record_book_number}")
