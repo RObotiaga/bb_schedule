@@ -7,24 +7,332 @@
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
     <style>
+        :root {
+            color-scheme: dark;
+            --action-blue: #0066cc;
+            --action-blue-dark: #2997ff;
+            --ink: #f5f5f7;
+            --ink-muted: #cccccc;
+            --ink-soft: #8f8f95;
+            --canvas: #000000;
+            --surface: #1d1d1f;
+            --surface-2: #272729;
+            --surface-3: #2a2a2c;
+            --hairline: rgba(255, 255, 255, 0.12);
+            --control: #f5f5f7;
+            --control-ink: #1d1d1f;
+            --radius-card: 18px;
+            --radius-pill: 9999px;
+            --font-display: "SF Pro Display", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+            --font-text: "SF Pro Text", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        }
+
+        html,
         body {
-            background-color: #f8f9fa;
+            min-height: 100%;
         }
-        .card {
-            border-radius: 15px;
-            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
-            border: none;
+
+        body {
+            background: var(--canvas);
+            color: var(--ink);
+            font-family: var(--font-text);
+            font-size: 17px;
+            line-height: 1.47;
+            letter-spacing: 0;
         }
+
         .container {
-            max-width: 800px;
+            max-width: 980px;
         }
+
+        .navbar {
+            min-height: 44px;
+            background: var(--canvas) !important;
+            border-bottom: 1px solid var(--hairline);
+        }
+
+        .navbar-brand {
+            color: var(--ink) !important;
+            font-family: var(--font-text);
+            font-size: 12px;
+            letter-spacing: 0;
+            font-weight: 400;
+        }
+
+        h1,
+        h2,
+        h3,
+        h4,
+        h5,
+        h6 {
+            font-family: var(--font-display);
+            font-weight: 600;
+            letter-spacing: 0;
+        }
+
+        .text-muted {
+            color: var(--ink-muted) !important;
+        }
+
+        .app-shell {
+            padding: 24px 0 48px;
+        }
+
+        .app-hero {
+            min-height: 168px;
+            display: flex;
+            align-items: flex-end;
+            justify-content: space-between;
+            gap: 24px;
+            padding: 48px 0 32px;
+            border-bottom: 1px solid var(--hairline);
+        }
+
+        .app-title {
+            margin: 0;
+            color: var(--ink);
+            font-family: var(--font-display);
+            font-size: clamp(34px, 8vw, 56px);
+            font-weight: 600;
+            line-height: 1.07;
+            letter-spacing: 0;
+        }
+
+        .app-subtitle {
+            margin-top: 8px;
+            color: var(--ink-muted);
+            font-size: 17px;
+        }
+
+        .nav-tabs {
+            border-color: var(--hairline);
+        }
+
+        .nav-tabs .nav-link {
+            min-height: 44px;
+            border: 0;
+            border-radius: 0;
+            color: var(--ink-muted);
+            font-size: 17px;
+            letter-spacing: 0;
+        }
+
+        .nav-tabs .nav-link:hover,
+        .nav-tabs .nav-link:focus {
+            color: var(--action-blue-dark);
+            border-color: transparent;
+        }
+
+        .nav-tabs .nav-link.active {
+            background: transparent;
+            color: var(--ink);
+            border-bottom: 2px solid var(--action-blue-dark);
+        }
+
+        .form-label {
+            color: var(--ink-muted);
+            font-size: 14px;
+            letter-spacing: 0;
+        }
+
+        .form-control,
+        .form-select {
+            min-height: 44px;
+            border-radius: var(--radius-pill);
+            border: 1px solid var(--hairline);
+            background-color: var(--surface);
+            color: var(--ink);
+            font-size: 17px;
+            letter-spacing: 0;
+        }
+
+        .form-control:focus,
+        .form-select:focus {
+            color: var(--ink);
+            background-color: var(--surface);
+            border-color: var(--action-blue-dark);
+            box-shadow: 0 0 0 2px rgba(41, 151, 255, 0.32);
+        }
+
+        .form-control::placeholder {
+            color: var(--ink-soft);
+        }
+
+        .form-select:disabled,
+        .form-control:disabled {
+            background-color: var(--surface-2);
+            color: var(--ink-soft);
+            opacity: 1;
+        }
+
+        .btn {
+            min-height: 44px;
+            border-radius: var(--radius-pill);
+            padding: 10px 22px;
+            font-size: 17px;
+            letter-spacing: 0;
+            transition: transform 120ms ease;
+        }
+
+        .btn:active {
+            transform: scale(0.95);
+        }
+
+        .btn-primary {
+            background: var(--action-blue);
+            border-color: var(--action-blue);
+            color: #ffffff;
+        }
+
+        .btn-primary:hover,
+        .btn-primary:focus {
+            background: #0071e3;
+            border-color: #0071e3;
+        }
+
+        .btn-outline-primary,
+        .btn-outline-secondary {
+            color: var(--action-blue-dark);
+            border-color: var(--action-blue-dark);
+            background: transparent;
+        }
+
+        .btn-outline-primary:hover,
+        .btn-outline-secondary:hover,
+        .btn-outline-primary:focus,
+        .btn-outline-secondary:focus {
+            color: #ffffff;
+            background: var(--action-blue);
+            border-color: var(--action-blue);
+        }
+
+        .card,
+        .apple-panel,
+        .list-group-item,
+        .schedule-day {
+            background: var(--surface);
+            color: var(--ink);
+            border: 1px solid var(--hairline);
+            border-radius: var(--radius-card);
+            box-shadow: none;
+        }
+
+        .apple-panel {
+            padding: 24px;
+        }
+
+        .schedule-day {
+            padding: 24px;
+        }
+
+        .schedule-date {
+            font-size: 24px;
+            line-height: 1.2;
+            margin: 0;
+        }
+
+        .lesson-row {
+            border-color: var(--hairline) !important;
+        }
+
         .lesson-time {
             font-weight: bold;
-            color: #0d6efd;
+            color: var(--action-blue-dark);
         }
+
         .lesson-week-type {
             font-size: 0.8em;
-            color: #6c757d;
+            color: var(--ink-muted);
+        }
+
+        .list-group {
+            border-radius: var(--radius-card);
+        }
+
+        .list-group-item {
+            margin-bottom: 8px;
+        }
+
+        .list-group-item-action:hover,
+        .list-group-item-action:focus {
+            background: var(--surface-2);
+            color: var(--ink);
+        }
+
+        .list-group-item.active {
+            background: var(--action-blue);
+            border-color: var(--action-blue);
+        }
+
+        .badge {
+            border-radius: var(--radius-pill);
+            font-weight: 400;
+            letter-spacing: 0;
+        }
+
+        .text-bg-secondary,
+        .text-bg-info {
+            background-color: var(--surface-3) !important;
+            color: var(--ink-muted) !important;
+        }
+
+        .alert {
+            border-radius: var(--radius-card);
+            border: 1px solid var(--hairline);
+            box-shadow: none;
+        }
+
+        .alert-warning {
+            background: #2a2415;
+            color: #ffe9a6;
+            border-color: rgba(255, 214, 102, 0.28);
+        }
+
+        .alert-info {
+            background: #092135;
+            color: #b8e0ff;
+            border-color: rgba(41, 151, 255, 0.28);
+        }
+
+        .alert-danger {
+            background: #351315;
+            color: #ffb4b9;
+            border-color: rgba(255, 120, 130, 0.28);
+        }
+
+        pre,
+        .bg-light {
+            background: var(--surface) !important;
+            color: var(--ink) !important;
+            border: 1px solid var(--hairline);
+        }
+
+        footer {
+            color: var(--ink-soft) !important;
+            padding: 32px 0 48px;
+        }
+
+        @media (max-width: 640px) {
+            .container {
+                padding-left: 18px;
+                padding-right: 18px;
+            }
+
+            .app-hero {
+                min-height: 132px;
+                padding: 32px 0 24px;
+                align-items: flex-start;
+                flex-direction: column;
+            }
+
+            .apple-panel,
+            .schedule-day {
+                padding: 18px;
+            }
+
+            .schedule-date {
+                font-size: 21px;
+            }
         }
     </style>
     {% block head %}{% endblock %}

@@ -8,10 +8,10 @@
     <div class="alert alert-danger" role="alert">{{ error }}</div>
     {% endif %}
 
-    <div class="d-flex justify-content-between align-items-start gap-3 mb-3">
+    <div class="app-hero mb-4">
         <div>
-            <h1 class="h3 mb-1">Расписание УрГУПС</h1>
-            <div class="text-muted small" id="profileLine">Загрузка профиля...</div>
+            <h1 class="app-title">Расписание УрГУПС</h1>
+            <div class="app-subtitle" id="profileLine">Загрузка профиля...</div>
         </div>
         <button class="btn btn-outline-secondary btn-sm" id="refreshBtn" type="button">Обновить</button>
     </div>
@@ -26,7 +26,7 @@
 
     <div class="tab-content">
         <section class="tab-pane fade show active" id="scheduleTab">
-            <form class="row g-2 align-items-end mb-3" id="groupForm">
+            <form class="row g-2 align-items-end mb-4 apple-panel" id="groupForm">
                 <div class="col-12 col-md-4">
                     <label class="form-label" for="facultySelect">Факультет</label>
                     <select class="form-select" id="facultySelect"></select>
@@ -43,7 +43,8 @@
                     <button class="btn btn-primary" type="submit">Показать</button>
                 </div>
             </form>
-            <div class="btn-group w-100 mb-3" role="group" id="dayButtons">
+            <div class="d-flex flex-wrap gap-2 mb-4" id="dayButtons">
+                <button class="btn btn-primary" data-all-days="true" type="button">Все дни</button>
                 <button class="btn btn-outline-primary" data-offset="0" type="button">Сегодня</button>
                 <button class="btn btn-outline-primary" data-offset="1" type="button">Завтра</button>
                 <button class="btn btn-outline-primary" data-offset="2" type="button">+2</button>
@@ -152,7 +153,7 @@ const state = {
     initData: tg?.initData || "",
     me: null,
     group: null,
-    dayOffset: 0,
+    dayOffset: null,
     teacher: null,
     teacherOffset: 0,
     currentNoteSubject: null,
@@ -175,16 +176,26 @@ const esc = (value) => String(value ?? "").replace(/[&<>"']/g, ch => ({ "&": "&a
 const setHtml = (id, html) => document.getElementById(id).innerHTML = html;
 const printAdmin = (data) => document.getElementById("adminOutput").textContent = JSON.stringify(data, null, 2);
 
+function updateDayButtons() {
+    document.querySelectorAll("#dayButtons button").forEach(button => {
+        const isAll = button.dataset.allDays === "true";
+        const isActive = isAll ? state.dayOffset === null : Number(button.dataset.offset) === state.dayOffset;
+        button.classList.toggle("btn-primary", isActive);
+        button.classList.toggle("btn-outline-primary", !isActive);
+    });
+}
+
 function renderSchedule(data) {
     state.group = data.group || state.group;
     if (!data.days?.length) {
         setHtml("scheduleView", `<div class="alert alert-warning">Расписание не найдено.</div>`);
         return;
     }
+    const totalLessons = data.days.reduce((sum, day) => sum + (day.lessons?.length || 0), 0);
     setHtml("scheduleView", data.days.map(day => `
         <section class="schedule-day mb-4">
             <div class="d-flex justify-content-between align-items-center border-bottom pb-2 mb-2">
-                <h2 class="h6 mb-0">${esc(day.date_display)}</h2>
+                <h2 class="schedule-date">${esc(day.date_display)}</h2>
                 <span class="badge text-bg-secondary">${esc(day.week_type || "")}</span>
             </div>
             ${day.lessons.map(lesson => `
@@ -195,14 +206,19 @@ function renderSchedule(data) {
                 </div>
             `).join("")}
         </section>
-    `).join(""));
+    `).join("") + `<div class="text-muted small text-center mt-4">Показано дней: ${data.days.length}, занятий: ${totalLessons}</div>`);
 }
 
-async function loadSchedule(dayOffset = state.dayOffset) {
+async function loadSchedule(dayOffset = null) {
     state.dayOffset = dayOffset;
+    updateDayButtons();
+    if (!state.group) {
+        setHtml("scheduleView", `<div class="alert alert-info">Выберите факультет, курс и группу, чтобы открыть расписание.</div>`);
+        return;
+    }
     const params = new URLSearchParams();
     if (state.group) params.set("group", state.group);
-    params.set("day_offset", dayOffset);
+    if (dayOffset !== null && dayOffset !== undefined) params.set("day_offset", dayOffset);
     try {
         renderSchedule(await api(`/api/schedule?${params}`));
     } catch (error) {
@@ -312,10 +328,15 @@ async function loadTeacherSchedule() {
 document.addEventListener("DOMContentLoaded", async () => {
     await loadFaculties();
     await loadMe();
-    await loadSchedule(0);
+    await loadSchedule(null);
 
     document.getElementById("refreshBtn").addEventListener("click", () => { loadMe(); loadSchedule(state.dayOffset); });
     document.getElementById("dayButtons").addEventListener("click", event => {
+        const allButton = event.target.closest("button[data-all-days]");
+        if (allButton) {
+            loadSchedule(null);
+            return;
+        }
         const button = event.target.closest("button[data-offset]");
         if (button) loadSchedule(Number(button.dataset.offset));
     });
@@ -346,7 +367,7 @@ document.addEventListener("DOMContentLoaded", async () => {
         if (!group) return;
         state.group = group;
         if (state.initData) await api("/api/me/group", {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({group})});
-        await loadSchedule(0);
+        await loadSchedule(null);
     });
 
     document.getElementById("teacherSearchForm").addEventListener("submit", async event => {
