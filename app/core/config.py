@@ -10,6 +10,7 @@ BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__fil
 TELEGRAM_BOT_TOKEN = config("TELEGRAM_BOT_TOKEN", default=None)
 _admin_id_str = config("ADMIN_ID", default="")
 ADMIN_ID = int(_admin_id_str) if _admin_id_str.strip().isdigit() else None
+WEBAPP_URL = config("WEBAPP_URL", default=None)
 
 BB_LOGIN = config("BB_LOGIN", default=None)
 BB_PASSWORD = config("BB_PASSWORD", default=None)
