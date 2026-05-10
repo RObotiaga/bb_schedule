@@ -7,6 +7,7 @@ services:
       - BB_PASSWORD=${BB_PASSWORD}
       - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
       - ADMIN_ID=${ADMIN_ID}
+      - WEBAPP_URL=${WEBAPP_URL}
     volumes:
       - ./data:/app/data
     command: python -m app.main bot
@@ -23,5 +24,6 @@ services:
       - BB_PASSWORD=${BB_PASSWORD}
       - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
       - ADMIN_ID=${ADMIN_ID}
+      - WEBAPP_URL=${WEBAPP_URL}
     # Using the python wrapper or direct uvicorn. Wrapper is consistent.
     command: python -m app.main web

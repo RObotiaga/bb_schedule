@@ -1,8 +1,10 @@
-from aiogram.types import ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardButton, InlineKeyboardMarkup
+from aiogram.types import ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from aiogram.filters.callback_data import CallbackData
 from typing import Any, Callable
 import logging
+
+from app.core.config import WEBAPP_URL
 
 # --- Callback Data Factory ---
 
@@ -32,16 +34,23 @@ CALLBACK_PREFIXES = {
 
 def get_welcome_inline_keyboard():
     builder = InlineKeyboardBuilder()
+    if WEBAPP_URL:
+        builder.button(text="📱 Открыть Mini App", web_app=WebAppInfo(url=WEBAPP_URL))
     builder.button(text="✏️ Изменить группу", callback_data="change_group")
+    builder.adjust(1)
     return builder.as_markup()
 
+_day_selection_rows = [
+    [KeyboardButton(text="Сегодня"), KeyboardButton(text="Завтра")],
+    [KeyboardButton(text="Пн"), KeyboardButton(text="Вт"), KeyboardButton(text="Ср")],
+    [KeyboardButton(text="Чт"), KeyboardButton(text="Пт"), KeyboardButton(text="Сб")],
+    [KeyboardButton(text="📊 Мои результаты"), KeyboardButton(text="/start")]
+]
+if WEBAPP_URL:
+    _day_selection_rows.insert(0, [KeyboardButton(text="📱 Mini App", web_app=WebAppInfo(url=WEBAPP_URL))])
+
 day_selection_keyboard = ReplyKeyboardMarkup(
-    keyboard=[
-        [KeyboardButton(text="Сегодня"), KeyboardButton(text="Завтра")],
-        [KeyboardButton(text="Пн"), KeyboardButton(text="Вт"), KeyboardButton(text="Ср")],
-        [KeyboardButton(text="Чт"), KeyboardButton(text="Пт"), KeyboardButton(text="Сб")],
-        [KeyboardButton(text="📊 Мои результаты"), KeyboardButton(text="/start")]
-    ],
+    keyboard=_day_selection_rows,
     resize_keyboard=True
 )
 
