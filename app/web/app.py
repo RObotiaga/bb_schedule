@@ -737,31 +737,33 @@ async def read_root(request: Request, user_id: int | None = None):
         group = await get_user_group_db(user_id)
         if group:
             return RedirectResponse(url=f"/schedule?{urlencode({'group': group})}")
-    return templates.TemplateResponse("index.html", {"request": request, "now_year": datetime.now().year})
+    return templates.TemplateResponse(request, "index.html", {"now_year": datetime.now().year})
 
 
 @app.get("/schedule", response_class=HTMLResponse)
 async def view_schedule(request: Request, group: str | None = None):
     if not group:
         return templates.TemplateResponse(
+            request,
             "index.html",
-            {"request": request, "error": "Группа не выбрана", "now_year": datetime.now().year},
+            {"error": "Группа не выбрана", "now_year": datetime.now().year},
         )
 
     schedule_data = await _schedule_for_group(group)
     if not schedule_data:
         return templates.TemplateResponse(
+            request,
             "index.html",
             {
-                "request": request,
                 "error": f"Расписание для группы {group} не найдено.",
                 "now_year": datetime.now().year,
             },
         )
 
     return templates.TemplateResponse(
+        request,
         "schedule.html",
-        {"request": request, "group": group, "schedule": schedule_data, "now_year": datetime.now().year},
+        {"group": group, "schedule": schedule_data, "now_year": datetime.now().year},
     )
 
 
