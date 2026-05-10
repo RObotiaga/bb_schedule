@@ -8,14 +8,6 @@
     <div class="alert alert-danger" role="alert">{{ error }}</div>
     {% endif %}
 
-    <div class="app-hero mb-4">
-        <div>
-            <h1 class="app-title">Расписание УрГУПС</h1>
-            <div class="app-subtitle" id="profileLine">Загрузка профиля...</div>
-        </div>
-        <button class="btn btn-outline-secondary btn-sm" id="refreshBtn" type="button">Обновить</button>
-    </div>
-
     <ul class="nav nav-tabs flex-nowrap overflow-auto mb-3" id="mainTabs" role="tablist">
         <li class="nav-item"><button class="nav-link active" data-bs-toggle="tab" data-bs-target="#scheduleTab" type="button">Расписание</button></li>
         <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#teachersTab" type="button">Преподаватели</button></li>
@@ -26,7 +18,7 @@
 
     <div class="tab-content">
         <section class="tab-pane fade show active" id="scheduleTab">
-            <form class="row g-2 align-items-end mb-4 apple-panel" id="groupForm">
+            <form class="row g-2 align-items-end mb-3 apple-panel" id="groupForm">
                 <div class="col-12 col-md-4">
                     <label class="form-label" for="facultySelect">Факультет</label>
                     <select class="form-select" id="facultySelect"></select>
@@ -43,15 +35,14 @@
                     <button class="btn btn-primary" type="submit">Показать</button>
                 </div>
             </form>
-            <div class="d-flex flex-wrap gap-2 mb-4" id="dayButtons">
-                <button class="btn btn-primary" data-all-days="true" type="button">Все дни</button>
-                <button class="btn btn-outline-primary" data-offset="0" type="button">Сегодня</button>
-                <button class="btn btn-outline-primary" data-offset="1" type="button">Завтра</button>
-                <button class="btn btn-outline-primary" data-offset="2" type="button">+2</button>
-                <button class="btn btn-outline-primary" data-offset="3" type="button">+3</button>
-                <button class="btn btn-outline-primary" data-offset="4" type="button">+4</button>
-                <button class="btn btn-outline-primary" data-offset="5" type="button">+5</button>
-            </div>
+            <form class="schedule-filter mb-4" id="dateForm">
+                <div>
+                    <label class="form-label" for="scheduleDate">Дата</label>
+                    <input class="form-control" id="scheduleDate" type="date">
+                </div>
+                <button class="btn btn-primary" type="submit">Показать дату</button>
+                <button class="btn btn-outline-secondary" id="clearDateBtn" type="button">Все дни</button>
+            </form>
             <div id="scheduleView"></div>
         </section>
 
@@ -153,7 +144,7 @@ const state = {
     initData: tg?.initData || "",
     me: null,
     group: null,
-    dayOffset: null,
+    selectedDate: null,
     teacher: null,
     teacherOffset: 0,
     currentNoteSubject: null,
@@ -176,13 +167,21 @@ const esc = (value) => String(value ?? "").replace(/[&<>"']/g, ch => ({ "&": "&a
 const setHtml = (id, html) => document.getElementById(id).innerHTML = html;
 const printAdmin = (data) => document.getElementById("adminOutput").textContent = JSON.stringify(data, null, 2);
 
-function updateDayButtons() {
-    document.querySelectorAll("#dayButtons button").forEach(button => {
-        const isAll = button.dataset.allDays === "true";
-        const isActive = isAll ? state.dayOffset === null : Number(button.dataset.offset) === state.dayOffset;
-        button.classList.toggle("btn-primary", isActive);
-        button.classList.toggle("btn-outline-primary", !isActive);
-    });
+function formatDateShort(value) {
+    const parsed = new Date(`${value}T00:00:00`);
+    return Number.isNaN(parsed.getTime()) ? value : parsed.toLocaleDateString("ru-RU", {day: "2-digit", month: "2-digit"});
+}
+
+function weekInfo(day) {
+    const parsed = new Date(`${day.date}T00:00:00`);
+    if (Number.isNaN(parsed.getTime())) return {key: day.date, label: "Неделя"};
+    const monday = new Date(parsed);
+    monday.setDate(parsed.getDate() - ((parsed.getDay() + 6) % 7));
+    const sunday = new Date(monday);
+    sunday.setDate(monday.getDate() + 6);
+    const key = monday.toISOString().slice(0, 10);
+    const label = `Неделя ${formatDateShort(key)} - ${formatDateShort(sunday.toISOString().slice(0, 10))}${day.week_type ? " · " + day.week_type : ""}`;
+    return {key, label};
 }
 
 function renderSchedule(data) {
@@ -192,7 +191,13 @@ function renderSchedule(data) {
         return;
     }
     const totalLessons = data.days.reduce((sum, day) => sum + (day.lessons?.length || 0), 0);
-    setHtml("scheduleView", data.days.map(day => `
+    let previousWeek = "";
+    setHtml("scheduleView", data.days.map(day => {
+        const currentWeek = day.week_key && day.week_label ? {key: day.week_key, label: day.week_label} : weekInfo(day);
+        const divider = currentWeek.key !== previousWeek ? `<div class="schedule-week-divider">${esc(currentWeek.label)}</div>` : "";
+        previousWeek = currentWeek.key;
+        return `
+        ${divider}
         <section class="schedule-day mb-4">
             <div class="d-flex justify-content-between align-items-center border-bottom pb-2 mb-2">
                 <h2 class="schedule-date">${esc(day.date_display)}</h2>
@@ -206,19 +211,19 @@ function renderSchedule(data) {
                 </div>
             `).join("")}
         </section>
-    `).join("") + `<div class="text-muted small text-center mt-4">Показано дней: ${data.days.length}, занятий: ${totalLessons}</div>`);
+    `}).join("") + `<div class="text-muted small text-center mt-4">Показано дней: ${data.days.length}, занятий: ${totalLessons}</div>`);
 }
 
-async function loadSchedule(dayOffset = null) {
-    state.dayOffset = dayOffset;
-    updateDayButtons();
+async function loadSchedule(selectedDate = state.selectedDate) {
+    state.selectedDate = selectedDate || null;
+    document.getElementById("scheduleDate").value = state.selectedDate || "";
     if (!state.group) {
         setHtml("scheduleView", `<div class="alert alert-info">Выберите факультет, курс и группу, чтобы открыть расписание.</div>`);
         return;
     }
     const params = new URLSearchParams();
     if (state.group) params.set("group", state.group);
-    if (dayOffset !== null && dayOffset !== undefined) params.set("day_offset", dayOffset);
+    if (state.selectedDate) params.set("date", state.selectedDate);
     try {
         renderSchedule(await api(`/api/schedule?${params}`));
     } catch (error) {
@@ -234,20 +239,16 @@ async function loadFaculties() {
 
 async function loadMe() {
     if (!state.initData) {
-        document.getElementById("profileLine").textContent = "Открыто вне Telegram: доступен публичный выбор группы.";
         return;
     }
     try {
         const data = await api("/api/me");
         state.me = data;
         state.group = data.group;
-        document.getElementById("profileLine").textContent = `${data.user.first_name || data.user.username || data.user.id}${data.group ? " · " + data.group : ""}`;
         document.getElementById("recordBookInput").value = data.record_book || "";
         renderSettings(data.settings || {});
         if (data.is_admin) document.getElementById("adminTabBtn").classList.remove("d-none");
-    } catch (error) {
-        document.getElementById("profileLine").textContent = "Не удалось проверить Telegram-профиль.";
-    }
+    } catch (error) {}
 }
 
 function renderSettings(settings) {
@@ -330,15 +331,12 @@ document.addEventListener("DOMContentLoaded", async () => {
     await loadMe();
     await loadSchedule(null);
 
-    document.getElementById("refreshBtn").addEventListener("click", () => { loadMe(); loadSchedule(state.dayOffset); });
-    document.getElementById("dayButtons").addEventListener("click", event => {
-        const allButton = event.target.closest("button[data-all-days]");
-        if (allButton) {
-            loadSchedule(null);
-            return;
-        }
-        const button = event.target.closest("button[data-offset]");
-        if (button) loadSchedule(Number(button.dataset.offset));
+    document.getElementById("dateForm").addEventListener("submit", event => {
+        event.preventDefault();
+        loadSchedule(document.getElementById("scheduleDate").value || null);
+    });
+    document.getElementById("clearDateBtn").addEventListener("click", () => {
+        loadSchedule(null);
     });
 
     document.getElementById("facultySelect").addEventListener("change", async event => {

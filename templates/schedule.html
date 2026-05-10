@@ -4,12 +4,9 @@
 
 {% block content %}
 <div class="app-shell">
-    <div class="app-hero mb-4">
-        <div>
-            <h1 class="app-title">Расписание</h1>
-            <div class="app-subtitle">Группа {{ group }}</div>
-        </div>
-        <a href="/" class="btn btn-outline-secondary">Вернуться</a>
+    <div class="d-flex justify-content-between align-items-center mb-3">
+        <div class="text-muted small">Группа {{ group }}</div>
+        <a href="/" class="btn btn-outline-secondary btn-sm">Выбор группы</a>
     </div>
 
     {% if not schedule or schedule|length == 0 %}
@@ -18,6 +15,9 @@
     </div>
     {% else %}
         {% for day in schedule %}
+        {% if loop.changed(day.week_key) %}
+        <div class="schedule-week-divider">{{ day.week_label }}</div>
+        {% endif %}
         <section class="schedule-day mb-4">
             <div class="d-flex justify-content-between align-items-center border-bottom pb-2 mb-2">
                 <h2 class="schedule-date">{{ day.date_display or day.date }}</h2>

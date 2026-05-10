@@ -15,7 +15,7 @@ from urllib.parse import parse_qsl, urlencode
 import uvicorn
 from aiogram import Bot
 from aiogram.types import BufferedInputFile
-from fastapi import Body, Depends, FastAPI, File, Form, Header, HTTPException, Request, UploadFile
+from fastapi import Body, Depends, FastAPI, File, Form, Header, HTTPException, Query, Request, UploadFile
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from fastapi.templating import Jinja2Templates
 
@@ -215,6 +215,19 @@ def _date_label(date_str: str) -> str:
     return f"{days_map.get(dt.strftime('%A'), dt.strftime('%A'))}, {dt.strftime('%d.%m.%Y')}"
 
 
+def _week_meta(date_str: str, week_type: str = "") -> dict[str, str]:
+    try:
+        dt = datetime.strptime(date_str, "%Y-%m-%d").date()
+    except ValueError:
+        return {"week_key": date_str, "week_label": "Неделя"}
+    week_start = dt - timedelta(days=dt.weekday())
+    week_end = week_start + timedelta(days=6)
+    label = f"Неделя {week_start.strftime('%d.%m')} - {week_end.strftime('%d.%m')}"
+    if week_type:
+        label = f"{label} · {week_type}"
+    return {"week_key": week_start.strftime("%Y-%m-%d"), "week_label": label}
+
+
 def _lesson_dict(row) -> dict[str, Any]:
     return {
         "time": row["time"],
@@ -288,7 +301,15 @@ async def _schedule_for_group(group: str, target_date: str | None = None, user_i
             lesson["is_subscription"] = row["group_name"] != group
             lessons.append(lesson)
             week_type = row["week_type"]
-        days.append({"date": day, "date_display": _date_label(day), "week_type": week_type, "lessons": lessons})
+        days.append(
+            {
+                "date": day,
+                "date_display": _date_label(day),
+                "week_type": week_type,
+                **_week_meta(day, week_type),
+                "lessons": lessons,
+            }
+        )
     return days
 
 
@@ -466,6 +487,7 @@ async def set_my_settings(payload: dict = Body(...), user: dict = Depends(get_cu
 async def api_schedule(
     group: str | None = None,
     day_offset: int | None = None,
+    schedule_date: str | None = Query(default=None, alias="date"),
     include_subscriptions: bool = True,
     x_telegram_init_data: str | None = Header(default=None, alias="X-Telegram-Init-Data"),
 ):
@@ -478,7 +500,12 @@ async def api_schedule(
         raise HTTPException(status_code=400, detail="group is required")
     group = await _resolve_schedule_group(group) or group
     target_date = None
-    if day_offset is not None:
+    if schedule_date:
+        try:
+            target_date = datetime.strptime(schedule_date, "%Y-%m-%d").strftime("%Y-%m-%d")
+        except ValueError:
+            raise HTTPException(status_code=400, detail="date must be YYYY-MM-DD")
+    elif day_offset is not None:
         target_date = (date.today() + timedelta(days=day_offset)).strftime("%Y-%m-%d")
     days = await _schedule_for_group(group, target_date, user["id"] if user and include_subscriptions else None)
     return {"group": group, "days": days}
