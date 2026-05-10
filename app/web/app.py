@@ -226,7 +226,23 @@ def _lesson_dict(row) -> dict[str, Any]:
     }
 
 
+async def _resolve_schedule_group(group: str | None) -> str | None:
+    if not group:
+        return None
+    db = await get_db_connection()
+    async with db.execute("SELECT 1 FROM schedule WHERE group_name = ? LIMIT 1", (group,)) as cursor:
+        if await cursor.fetchone():
+            return group
+
+    target = group.casefold()
+    async with db.execute("SELECT DISTINCT group_name FROM schedule") as cursor:
+        rows = await cursor.fetchall()
+    matches = [row["group_name"] for row in rows if row["group_name"] and row["group_name"].casefold() == target]
+    return matches[0] if len(matches) == 1 else group
+
+
 async def _schedule_for_group(group: str, target_date: str | None = None, user_id: int | None = None):
+    group = await _resolve_schedule_group(group) or group
     db = await get_db_connection()
     params: tuple[Any, ...]
     if target_date:
@@ -403,9 +419,14 @@ async def resolve_user(user_id: int):
 @app.get("/api/me")
 async def get_me(user: dict = Depends(get_current_user)):
     record_book = await get_record_book_number(user["id"])
+    group = await get_user_group_db(user["id"])
+    resolved_group = await _resolve_schedule_group(group)
+    if group and resolved_group and resolved_group != group:
+        await save_user_group_db(user["id"], resolved_group)
+        group = resolved_group
     return {
         "user": user,
-        "group": await get_user_group_db(user["id"]),
+        "group": group,
         "record_book": record_book,
         "settings": await get_user_settings(user["id"]),
         "subscriptions": await get_subscribed_teachers(user["id"]),
@@ -418,6 +439,7 @@ async def set_my_group(payload: dict = Body(...), user: dict = Depends(get_curre
     group = payload.get("group")
     if not group:
         raise HTTPException(status_code=400, detail="group is required")
+    group = await _resolve_schedule_group(group) or group
     await save_user_group_db(user["id"], group)
     return {"group": group}
 
@@ -454,6 +476,7 @@ async def api_schedule(
         group = await get_user_group_db(user["id"])
     if not group:
         raise HTTPException(status_code=400, detail="group is required")
+    group = await _resolve_schedule_group(group) or group
     target_date = None
     if day_offset is not None:
         target_date = (date.today() + timedelta(days=day_offset)).strftime("%Y-%m-%d")
@@ -736,6 +759,7 @@ async def read_root(request: Request, user_id: int | None = None):
     if user_id:
         group = await get_user_group_db(user_id)
         if group:
+            group = await _resolve_schedule_group(group) or group
             return RedirectResponse(url=f"/schedule?{urlencode({'group': group})}")
     return templates.TemplateResponse(request, "index.html", {"now_year": datetime.now().year})
 
@@ -749,6 +773,7 @@ async def view_schedule(request: Request, group: str | None = None):
             {"error": "Группа не выбрана", "now_year": datetime.now().year},
         )
 
+    group = await _resolve_schedule_group(group) or group
     schedule_data = await _schedule_for_group(group)
     if not schedule_data:
         return templates.TemplateResponse(
