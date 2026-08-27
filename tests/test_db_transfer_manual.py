@@ -6,27 +6,50 @@ import sys
 # Add project root to path
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
+import pytest
+import aiosqlite
+
 from app.core.database import initialize_database
 from app.services.db_transfer import export_rating_data, import_rating_data
 import app.core.database as db_module
-import aiosqlite
 
-async def test_db_transfer():
-    print("Testing DB Transfer...")
-    
-    # 0. Monkeypatch get_db_connection to use an in-memory database
-    mem_db = await aiosqlite.connect(":memory:")
-    mem_db.row_factory = aiosqlite.Row
-    
+
+@pytest.fixture
+async def mem_db(monkeypatch):
+    """In-memory БД вместо глобального соединения.
+
+    Подмена строго ограничена временем теста (monkeypatch восстанавливает
+    функции при разборке фикстуры), иначе «фальшивый» get_db_connection
+    протекает в следующие тестовые модули и ломает их. Соединение закрывается
+    гарантированно — его воркер-поток иначе не даст процессу завершиться.
+    """
+    conn = await aiosqlite.connect(":memory:")
+    conn.row_factory = aiosqlite.Row
+
     async def get_test_db():
-        return mem_db
-    
-    db_module.get_db_connection = get_test_db
-    import app.services.db_transfer
-    app.services.db_transfer.get_db_connection = get_test_db
-    
+        return conn
+
+    import app.services.db_transfer as db_transfer_module
+    monkeypatch.setattr(db_module, "get_db_connection", get_test_db)
+    monkeypatch.setattr(db_transfer_module, "get_db_connection", get_test_db)
+
+    yield conn
+
+    try:
+        await conn.close()
+    except Exception:
+        try:
+            conn.stop()
+        except Exception:
+            pass
+
+
+@pytest.mark.asyncio
+async def test_db_transfer(mem_db):
+    print("Testing DB Transfer...")
+
     await initialize_database()
-    db = await db_module.get_db_connection()
+    db = mem_db
 
     # 1. Clean up first (just in case)
     await db.execute("DELETE FROM rating_data")

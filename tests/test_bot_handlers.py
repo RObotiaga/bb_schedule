@@ -263,9 +263,13 @@ async def test_teacher_search_multi_word(mock_message, mocker):
     from app.bot.handlers.teachers import process_teacher_search
     from aiogram.fsm.context import FSMContext
     from app.core.state import GlobalState
-    
+
     mock_state = mocker.AsyncMock(spec=FSMContext)
-    
+
+    # Изолируем хендлер от реальной БД: show_teacher_schedule ходит в schedule/teacher_subscriptions
+    mocker.patch('app.bot.handlers.teachers.get_schedule_by_teacher', return_value=[])
+    mocker.patch('app.bot.handlers.teachers.is_subscribed_to_teacher', return_value=False)
+
     # Мокаем глобальный список преподавателей
     mocker.patch.object(GlobalState, 'ALL_TEACHERS_LIST', ["Сергеев Евгений Алексеевич"])
     

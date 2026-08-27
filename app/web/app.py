@@ -21,8 +21,13 @@ from fastapi.templating import Jinja2Templates
 
 from app.bot.formatter import filter_results_by_settings
 from app.bot.handlers.teachers import is_teacher_match
-from app.core.config import ADMIN_ID, BASE_DIR, DB_PATH, TELEGRAM_BOT_TOKEN
-from app.core.database import close_db_connection, get_db_connection, initialize_database
+from app.core.config import ADMIN_ID, BASE_DIR, TELEGRAM_BOT_TOKEN
+from app.core.database import (
+    close_db_connection,
+    get_db_connection,
+    initialize_database,
+    restore_database_bytes,
+)
 from app.core.repositories.job_log import get_last_two_job_logs
 from app.core.repositories.rating import (
     get_cluster_by_group,
@@ -69,13 +74,23 @@ logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    logger.info("Запуск веб-приложения. Загрузка структуры расписания...")
-    await initialize_database()
-    if not GlobalState.FACULTIES_LIST:
-        await GlobalState.reload()
-    yield
-    logger.info("Остановка веб-приложения.")
-    await close_db_connection()
+    # Код после yield — НЕ automatic finally: без try/finally исключение между
+    # initialize_database() и yield оставит worker aiosqlite живым.
+    jobs.start_accepting()
+    try:
+        logger.info("Запуск веб-приложения. Загрузка структуры расписания...")
+        await initialize_database()
+        if not GlobalState.FACULTIES_LIST:
+            await GlobalState.reload()
+        yield
+    finally:
+        logger.info("Остановка веб-приложения.")
+        # Сначала запрещаем новые admin jobs и завершаем уже запущенные.
+        # Только затем закрываем общую БД.
+        try:
+            await jobs.shutdown()
+        finally:
+            await close_db_connection()
 
 
 app = FastAPI(lifespan=lifespan, title="USURT Schedule")
@@ -98,6 +113,13 @@ class JobRegistry:
             name: {"name": name, "status": "idle", "message": "", "updated_at": None}
             for name in self._locks
         }
+        self._tasks: set[asyncio.Task] = set()
+        self._active_names: set[str] = set()
+        self._accepting = False
+
+    def start_accepting(self):
+        """Разрешает запуск jobs при старте приложения."""
+        self._accepting = True
 
     def snapshot(self, name: str | None = None):
         if name:
@@ -107,41 +129,73 @@ class JobRegistry:
     def start(self, name: str, coro_factory):
         if name not in self._locks:
             raise HTTPException(status_code=404, detail="Unknown job")
-        if self._locks[name].locked():
+        if not self._accepting:
+            raise HTTPException(status_code=503, detail="Application is shutting down")
+        if name in self._active_names:
             return self.snapshot(name)
-        asyncio.create_task(self._runner(name, coro_factory))
+
+        # Имя резервируется до create_task(), поэтому два последовательных
+        # запроса не смогут оба поставить одну job в очередь.
+        self._active_names.add(name)
         self._jobs[name] = {
             "name": name,
             "status": "queued",
             "message": "Задача поставлена в очередь",
             "updated_at": datetime.now().isoformat(),
         }
+
+        task = asyncio.create_task(self._runner(name, coro_factory))
+        self._tasks.add(task)
+        task.add_done_callback(self._tasks.discard)
         return self.snapshot(name)
 
     async def _runner(self, name: str, coro_factory):
-        async with self._locks[name]:
-            self._jobs[name] = {
-                "name": name,
-                "status": "running",
-                "message": "Задача выполняется",
-                "updated_at": datetime.now().isoformat(),
-            }
-            try:
-                result = await coro_factory()
+        try:
+            async with self._locks[name]:
                 self._jobs[name] = {
                     "name": name,
-                    "status": "success",
-                    "message": str(result or "Готово"),
+                    "status": "running",
+                    "message": "Задача выполняется",
                     "updated_at": datetime.now().isoformat(),
                 }
-            except Exception as exc:
-                logger.exception("Web admin job failed: %s", name)
-                self._jobs[name] = {
-                    "name": name,
-                    "status": "error",
-                    "message": str(exc),
-                    "updated_at": datetime.now().isoformat(),
-                }
+                try:
+                    result = await coro_factory()
+                    self._jobs[name] = {
+                        "name": name,
+                        "status": "success",
+                        "message": str(result or "Готово"),
+                        "updated_at": datetime.now().isoformat(),
+                    }
+                except asyncio.CancelledError:
+                    self._jobs[name] = {
+                        "name": name,
+                        "status": "cancelled",
+                        "message": "Задача отменена при остановке приложения",
+                        "updated_at": datetime.now().isoformat(),
+                    }
+                    raise
+                except Exception as exc:
+                    logger.exception("Web admin job failed: %s", name)
+                    self._jobs[name] = {
+                        "name": name,
+                        "status": "error",
+                        "message": str(exc),
+                        "updated_at": datetime.now().isoformat(),
+                    }
+        finally:
+            self._active_names.discard(name)
+
+    async def shutdown(self):
+        """Запрещает новые jobs и завершает все уже запущенные до close БД."""
+        self._accepting = False
+
+        # start() не содержит await, поэтому после этого переключения в текущем
+        # loop новые tasks уже не появятся.
+        tasks = [task for task in list(self._tasks) if not task.done()]
+        for task in tasks:
+            task.cancel()
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
 
 
 jobs = JobRegistry()
@@ -601,9 +655,11 @@ async def api_admin_start_job(job_name: str, admin: dict = Depends(require_admin
     if job_name == "schedule_sync":
         async def run():
             success = await run_full_sync()
-            if success:
-                await GlobalState.reload()
-            return "Расписание обновлено" if success else "Обновление завершилось с ошибкой"
+            if not success:
+                # Иначе JobRegistry пометит задачу успешной при любом исходе.
+                raise RuntimeError("Обновление завершилось с ошибкой")
+            await GlobalState.reload()
+            return "Расписание обновлено"
 
         return jobs.start("schedule_sync", run)
     if job_name == "rating_update":
@@ -643,9 +699,11 @@ async def api_admin_import_db(file: UploadFile = File(...), admin: dict = Depend
     raw = await file.read()
 
     async def run():
-        await close_db_connection()
-        with open(DB_PATH, "wb") as db_file:
-            db_file.write(raw)
+        # Не заменяем открытый SQLite-файл через ``wb``: bot и web — разные
+        # процессы и могут одновременно держать соединения с одной DB. SQLite
+        # Online Backup API обновляет содержимое транзакционно, сохраняя уже
+        # открытые соединения валидными.
+        await restore_database_bytes(raw)
         await initialize_database()
         await GlobalState.reload()
         return "База данных импортирована"
@@ -737,31 +795,33 @@ async def read_root(request: Request, user_id: int | None = None):
         group = await get_user_group_db(user_id)
         if group:
             return RedirectResponse(url=f"/schedule?{urlencode({'group': group})}")
-    return templates.TemplateResponse("index.html", {"request": request, "now_year": datetime.now().year})
+    return templates.TemplateResponse(request, "index.html", {"now_year": datetime.now().year})
 
 
 @app.get("/schedule", response_class=HTMLResponse)
 async def view_schedule(request: Request, group: str | None = None):
     if not group:
         return templates.TemplateResponse(
+            request,
             "index.html",
-            {"request": request, "error": "Группа не выбрана", "now_year": datetime.now().year},
+            {"error": "Группа не выбрана", "now_year": datetime.now().year},
         )
 
     schedule_data = await _schedule_for_group(group)
     if not schedule_data:
         return templates.TemplateResponse(
+            request,
             "index.html",
             {
-                "request": request,
                 "error": f"Расписание для группы {group} не найдено.",
                 "now_year": datetime.now().year,
             },
         )
 
     return templates.TemplateResponse(
+        request,
         "schedule.html",
-        {"request": request, "group": group, "schedule": schedule_data, "now_year": datetime.now().year},
+        {"group": group, "schedule": schedule_data, "now_year": datetime.now().year},
     )
 
 

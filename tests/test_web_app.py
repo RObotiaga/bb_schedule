@@ -115,7 +115,12 @@ def client(tmp_path, monkeypatch):
     asyncio.run(database.close_db_connection())
 
 
-def _init_data(user_id: int, token: str = "123456789:AABBCcDDEEFFGG", auth_date: int | None = None):
+def _init_data(user_id: int, token: str | None = None, auth_date: int | None = None):
+    # Подписываем ТЕМ ЖЕ токеном, которым приложение проверяет подпись.
+    # Хардкод здесь ломает тесты при любом другом порядке импорта модулей:
+    # app.core.config мог уже инициализироваться с реальным токеном из .env.
+    if token is None:
+        from app.core.config import TELEGRAM_BOT_TOKEN as token
     pairs = {
         "auth_date": str(auth_date or int(time.time())),
         "query_id": "test-query",

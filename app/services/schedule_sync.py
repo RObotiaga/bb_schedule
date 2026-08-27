@@ -472,7 +472,7 @@ class ScheduleProcessor:
 
         conn = sqlite3.connect(self.db_path)
         all_lessons = []
-        
+
         logging.info("Processing schedule files...")
         for dirpath, _, filenames in os.walk(self.schedules_dir):
             if dirpath == self.schedules_dir: continue
@@ -525,14 +525,20 @@ async def run_full_sync():
     details = {}
     status = "ERROR"
     try:
+        # Гарантируем полную схему (таблицы + индексы + job_logs): ручной
+        # запуск возможен до первого старта бота/веба.
+        from app.core.database import initialize_database
+        await initialize_database()
+
         xls_files = await fetcher.run()
         details["excel_files_downloaded"] = len(xls_files)
         
-        # Теоретически тут можно посчитать rows_processed, 
-        # но ScheduleProcessor напрямую через sqlite3 пишет в БД.
-        # Для простоты считаем успешным, если не было исключений.
         if xls_files:
-            processor.run()
+            db_ok = processor.run()
+            if not db_ok:
+                details["error"] = "Schedule processing/DB update failed"
+                logging.error("Обработка расписаний завершилась ошибкой — статус задачи ERROR.")
+                return False
             status = "SUCCESS"
         else:
             logging.warning("Не удалось скачать файлы расписания.")

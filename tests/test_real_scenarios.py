@@ -22,10 +22,9 @@ def test_etf_4_course_sot412_parsing():
     Test parsing of 'ЭТФ 4 курс' schedule to ensure group SOt-412 is found.
     Uses the real downloaded file if it exists.
     """
-    # Expected path based on fetch logs
-    # data\schedules\Электротехнический факультет\4 курс\Четная неделя_ЭТФ 4 курс четная.xls (or similar)
-    
-    etf_dir = os.path.join(SCHEDULES_DIR, "Электротехнический факультет", "4 курс")
+    # Фетчер складывает файлы как data/schedules/<факультет>/<неделя>_<файл>.xls
+    # (курс определяется из имени файла — отдельной подпапки курса нет)
+    etf_dir = os.path.join(SCHEDULES_DIR, "Электротехнический факультет")
     
     if not os.path.exists(etf_dir):
         pytest.skip(f"Directory {etf_dir} not found. Skipping real file test.")
@@ -36,14 +35,14 @@ def test_etf_4_course_sot412_parsing():
         if "СОт-412" in f: # If filename has group - rare but possible
              found_file = os.path.join(etf_dir, f)
              break
-        if "ЭТФ 4 курс" in f and f.endswith(".xls") and "с 12 января" not in f: # Standard file
+        if "ЭТФ 4 курс" in f and f.endswith((".xls", ".xlsx")) and "с 12 января" not in f: # Standard file
              found_file = os.path.join(etf_dir, f)
              # Don't break yet, keep looking for better match or use this
     
     if not found_file:
          # Try with "с 12 января" if base not found
          for f in os.listdir(etf_dir):
-            if "ЭТФ 4 курс" in f and f.endswith(".xls"):
+            if "ЭТФ 4 курс" in f and f.endswith((".xls", ".xlsx")):
                  found_file = os.path.join(etf_dir, f)
                  break
                  

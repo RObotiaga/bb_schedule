@@ -11,10 +11,16 @@ COPY . .
 ENV TELEGRAM_BOT_TOKEN=test_token_for_build
 ENV ADMIN_ID=12345678
 # Install test dependencies
-RUN pip install pytest pytest-asyncio pytest-mock pytest-cov
+RUN pip install pytest pytest-asyncio pytest-mock pytest-cov pytest-timeout
 # Run the specific scenario test (or all tests)
 # Ensure pytest return code 0 propagates to build success, non-zero stops build
-RUN pytest tests/test_scenario_flow.py tests/test_imports.py
+RUN pytest \
+    tests/test_scenario_flow.py \
+    tests/test_imports.py \
+    tests/test_database_lifecycle.py \
+    tests/test_database_restore.py \
+    tests/test_database_backup.py \
+    tests/test_background_shutdown.py
 # Create a marker file to indicate tests passed
 RUN touch /tmp/tests_passed
 

@@ -5,6 +5,27 @@ import tempfile
 import aiosqlite
 from datetime import datetime, timezone, timedelta
 
+# === Global DB isolation ===
+
+@pytest.fixture(autouse=True)
+def _close_global_db_connection():
+    """
+    Останавливает глобальное aiosqlite-соединение после каждого теста.
+
+    Иначе соединение «переживает» тест: его не-daemon воркер-поток не даёт
+    процессу pytest завершиться после прогона.
+    """
+    yield
+    from app.core import database
+    conn = database._global_db_conn
+    database._global_db_conn = None
+    if conn is not None:
+        try:
+            # Синхронная остановка воркер-потока и закрытие sqlite-хэндла.
+            conn.stop()
+        except Exception:
+            pass
+
 # === Database Fixtures ===
 
 @pytest.fixture

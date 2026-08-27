@@ -19,7 +19,6 @@ tools/debug/
 tools/fix/
 tools/query/
 tools/seed_subject_stats.py
-tools/sync_manual.py
 tools/update_mapping.py
 tools/test_format.py
 tools/test_sync.py
