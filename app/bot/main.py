@@ -10,7 +10,7 @@ from app.core.config import TELEGRAM_BOT_TOKEN
 from app.core.state import GlobalState
 from app.core.database import initialize_database, close_db_connection
 from app.services.schedule_sync import run_full_sync
-from app.bot.handlers import common, schedule, teachers, session, admin, rating, subject_rating
+from app.bot.handlers import common, schedule, teachers, session, admin, admin_ux, rating, subject_rating
 
 async def periodic_update(bot: Bot):
     logging.info("⏳ Запуск периодического обновления расписания...")
@@ -64,8 +64,10 @@ def create_dispatcher() -> Dispatcher:
     dp = Dispatcher(storage=MemoryStorage())
     dp.shutdown.register(_shutdown_dispatcher_handlers)
     
-    # Include Routers
+    # UX-specific admin flows must be registered before the legacy admin router:
+    # aiogram stops propagation after the first matching handler.
     dp.include_router(common.router)
+    dp.include_router(admin_ux.router)
     dp.include_router(admin.router)
     dp.include_router(schedule.router)
     dp.include_router(teachers.router)

@@ -6,6 +6,7 @@ class TeacherSearch(StatesGroup):
 
 class Broadcast(StatesGroup):
     waiting_for_message = State()
+    confirming_message = State()
 
 class SessionResults(StatesGroup):
     waiting_for_record_book_number = State()
@@ -19,5 +20,10 @@ class ChecklistAdd(StatesGroup):
 class SubjectSearch(StatesGroup):
     waiting_for_subject_name = State()
 
+class RatingImport(StatesGroup):
+    waiting_for_file = State()
+    confirming_file = State()
+
 class DatabaseBackup(StatesGroup):
     waiting_for_db_file = State()
+    confirming_db = State()

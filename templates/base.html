@@ -2,34 +2,171 @@
 <html lang="ru">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
     <title>{% block title %}USURT Schedule{% endblock %}</title>
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
     <style>
+        :root {
+            --ux-bg: #f8f9fa;
+            --ux-surface: #ffffff;
+            --ux-text: #212529;
+            --ux-muted: #6c757d;
+            --ux-primary: #0d6efd;
+            --ux-primary-text: #ffffff;
+            --ux-danger: #dc3545;
+            --ux-border: rgba(0, 0, 0, 0.12);
+            --ux-safe-top: 0px;
+            --ux-safe-bottom: 0px;
+        }
+        html, body {
+            background: var(--ux-bg);
+            color: var(--ux-text);
+            min-height: 100%;
+        }
         body {
-            background-color: #f8f9fa;
+            padding-bottom: max(var(--ux-safe-bottom), env(safe-area-inset-bottom, 0px));
+        }
+        body.tg-miniapp {
+            padding-top: var(--ux-safe-top);
+        }
+        body.tg-miniapp .navbar,
+        body.tg-miniapp footer {
+            display: none;
+        }
+        body.tg-miniapp > .container {
+            padding-top: .75rem;
+        }
+        .navbar {
+            background: var(--ux-primary) !important;
+        }
+        .card,
+        .list-group-item,
+        .form-control,
+        .form-select,
+        .nav-tabs .nav-link.active,
+        .dropdown-menu {
+            background-color: var(--ux-surface);
+            color: var(--ux-text);
+            border-color: var(--ux-border);
+        }
+        .text-muted,
+        .form-text {
+            color: var(--ux-muted) !important;
+        }
+        .form-control::placeholder {
+            color: var(--ux-muted);
+            opacity: .8;
+        }
+        .nav-tabs {
+            border-color: var(--ux-border);
+        }
+        .nav-tabs .nav-link {
+            color: var(--ux-muted);
+            white-space: nowrap;
+        }
+        .nav-tabs .nav-link.active {
+            color: var(--ux-primary);
+            border-color: var(--ux-border) var(--ux-border) var(--ux-surface);
+        }
+        .btn-primary {
+            --bs-btn-bg: var(--ux-primary);
+            --bs-btn-border-color: var(--ux-primary);
+            --bs-btn-color: var(--ux-primary-text);
         }
         .card {
             border-radius: 15px;
-            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
-            border: none;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+            border: 1px solid var(--ux-border);
         }
         .container {
             max-width: 800px;
         }
         .lesson-time {
             font-weight: bold;
-            color: #0d6efd;
+            color: var(--ux-primary);
         }
         .lesson-week-type {
             font-size: 0.8em;
-            color: #6c757d;
+            color: var(--ux-muted);
+        }
+        #uxProgress {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 3px;
+            z-index: 1100;
+            pointer-events: none;
+            opacity: 0;
+            transition: opacity .15s ease;
+            background: linear-gradient(90deg, transparent, var(--ux-primary), transparent);
+            background-size: 45% 100%;
+            animation: ux-progress 1s linear infinite;
+        }
+        body.ux-loading #uxProgress { opacity: 1; }
+        @keyframes ux-progress {
+            from { background-position: -70vw 0; }
+            to { background-position: 140vw 0; }
+        }
+        #uxToastContainer {
+            position: fixed;
+            left: 50%;
+            bottom: calc(1rem + var(--ux-safe-bottom));
+            transform: translateX(-50%);
+            width: min(92vw, 520px);
+            z-index: 1200;
+            display: grid;
+            gap: .5rem;
+            pointer-events: none;
+        }
+        .ux-toast {
+            background: var(--ux-surface);
+            color: var(--ux-text);
+            border: 1px solid var(--ux-border);
+            border-left: 4px solid var(--ux-danger);
+            border-radius: .75rem;
+            padding: .75rem .9rem;
+            box-shadow: 0 8px 30px rgba(0, 0, 0, .18);
+            pointer-events: auto;
+        }
+        .ux-toast-success { border-left-color: #198754; }
+        .ux-busy {
+            opacity: .6;
+            pointer-events: none;
+        }
+        #dayButtons .btn {
+            min-width: 5.5rem;
+            white-space: nowrap;
+        }
+        #adminOutput { display: none; }
+        #uxAdminOutput {
+            display: grid;
+            gap: .75rem;
+        }
+        .ux-admin-card {
+            background: var(--ux-surface);
+            border: 1px solid var(--ux-border);
+            border-radius: .75rem;
+            padding: .8rem .9rem;
+        }
+        .ux-admin-card .badge { text-transform: none; }
+        .ux-browser-notice {
+            border-left: 4px solid var(--ux-primary);
+        }
+        @media (max-width: 576px) {
+            .container { padding-left: .75rem; padding-right: .75rem; }
+            .app-shell h1 { font-size: 1.35rem; }
+            #dayButtons { overflow-x: auto; justify-content: flex-start; }
+            #dayButtons .btn { flex: 0 0 auto; }
         }
     </style>
     {% block head %}{% endblock %}
 </head>
 <body>
+    <div id="uxProgress" aria-hidden="true"></div>
+    <div id="uxToastContainer" aria-live="polite" aria-atomic="true"></div>
+
     <nav class="navbar navbar-expand-lg navbar-dark bg-primary mb-4">
         <div class="container">
             <a class="navbar-brand" href="/">📅 USURT Schedule</a>
@@ -43,6 +180,372 @@
     <footer class="text-center mt-5 mb-3 text-muted">
         <small>&copy; {{ now_year }} USURT Schedule Bot Web Interface</small>
     </footer>
+
+    <script>
+    (() => {
+        const tg = window.Telegram?.WebApp;
+        const isTelegram = Boolean(tg?.initData);
+        let activeRequests = 0;
+        let busyTimer = null;
+        let jobsPollTimer = null;
+        const nativeFetch = window.fetch.bind(window);
+
+        const css = (name, value) => document.documentElement.style.setProperty(name, value);
+        const px = value => Number.isFinite(Number(value)) ? `${Number(value)}px` : "0px";
+
+        function applyTelegramTheme() {
+            if (!tg) return;
+            const p = tg.themeParams || {};
+            css("--ux-bg", p.bg_color || "#f8f9fa");
+            css("--ux-surface", p.secondary_bg_color || p.bg_color || "#ffffff");
+            css("--ux-text", p.text_color || "#212529");
+            css("--ux-muted", p.hint_color || "#6c757d");
+            css("--ux-primary", p.button_color || p.link_color || "#0d6efd");
+            css("--ux-primary-text", p.button_text_color || "#ffffff");
+            css("--ux-danger", p.destructive_text_color || "#dc3545");
+            css("--ux-border", p.section_separator_color || "rgba(127,127,127,.25)");
+            const bg = (p.bg_color || "#ffffff").replace("#", "");
+            if (bg.length === 6) {
+                const brightness = (parseInt(bg.slice(0, 2), 16) * 299 + parseInt(bg.slice(2, 4), 16) * 587 + parseInt(bg.slice(4, 6), 16) * 114) / 1000;
+                document.documentElement.style.colorScheme = brightness < 128 ? "dark" : "light";
+            }
+        }
+
+        function applySafeArea() {
+            if (!tg) return;
+            const top = tg.contentSafeAreaInset?.top ?? tg.safeAreaInset?.top ?? 0;
+            const bottom = tg.contentSafeAreaInset?.bottom ?? tg.safeAreaInset?.bottom ?? 0;
+            css("--ux-safe-top", px(top));
+            css("--ux-safe-bottom", px(bottom));
+        }
+
+        function toast(message, kind = "danger") {
+            if (!message) return;
+            const container = document.getElementById("uxToastContainer");
+            if (!container) return;
+            const node = document.createElement("div");
+            node.className = `ux-toast ${kind === "success" ? "ux-toast-success" : ""}`;
+            node.setAttribute("role", "status");
+            node.textContent = message;
+            container.appendChild(node);
+            setTimeout(() => node.remove(), 4500);
+        }
+        window.uxToast = toast;
+
+        function friendlyError(text, status) {
+            let value = String(text || "").trim();
+            try {
+                const parsed = JSON.parse(value);
+                value = parsed.detail || parsed.message || value;
+            } catch (_) {}
+            const known = {
+                "group is required": "Сначала выберите группу.",
+                "record_book is not set": "Сначала укажите номер зачётной книжки в разделе «Сессия».",
+                "Authentication required": "Эта функция доступна при открытии Mini App из Telegram.",
+                "Telegram authentication required": "Эта функция доступна при открытии Mini App из Telegram.",
+                "Forbidden": "Недостаточно прав для этого действия.",
+            };
+            return known[value] || value || `Ошибка запроса (${status})`;
+        }
+
+        function releaseBusy() {
+            document.querySelectorAll(".ux-busy").forEach(el => {
+                el.classList.remove("ux-busy");
+                el.removeAttribute("aria-busy");
+            });
+        }
+
+        function updateLoading() {
+            document.body?.classList.toggle("ux-loading", activeRequests > 0);
+            if (activeRequests === 0) {
+                clearTimeout(busyTimer);
+                busyTimer = setTimeout(releaseBusy, 80);
+            }
+        }
+
+        window.fetch = async (input, init = {}) => {
+            const url = typeof input === "string" ? input : input?.url || "";
+            activeRequests += 1;
+            updateLoading();
+            try {
+                const response = await nativeFetch(input, init);
+                if (!response.ok) {
+                    const suppressPublicInitialSchedule = !isTelegram && url.includes("/api/schedule?") && !url.includes("group=");
+                    if (!suppressPublicInitialSchedule) {
+                        response.clone().text().then(text => toast(friendlyError(text, response.status))).catch(() => {});
+                    }
+                }
+                return response;
+            } catch (error) {
+                toast("Не удалось связаться с сервером. Проверьте соединение и попробуйте ещё раз.");
+                throw error;
+            } finally {
+                activeRequests = Math.max(0, activeRequests - 1);
+                updateLoading();
+            }
+        };
+
+        function markBusy(element) {
+            if (!element) return;
+            setTimeout(() => {
+                element.classList.add("ux-busy");
+                element.setAttribute("aria-busy", "true");
+                setTimeout(() => {
+                    element.classList.remove("ux-busy");
+                    element.removeAttribute("aria-busy");
+                }, 10000);
+                if (activeRequests === 0) {
+                    setTimeout(() => {
+                        if (activeRequests === 0) {
+                            element.classList.remove("ux-busy");
+                            element.removeAttribute("aria-busy");
+                        }
+                    }, 250);
+                }
+            }, 0);
+        }
+
+        function askConfirm(message) {
+            return new Promise(resolve => {
+                if (isTelegram && typeof tg?.showConfirm === "function") {
+                    tg.showConfirm(message, resolve);
+                } else {
+                    resolve(window.confirm(message));
+                }
+            });
+        }
+
+        function formatDateButton(button) {
+            const offset = Number(button.dataset.offset || 0);
+            const d = new Date();
+            d.setHours(12, 0, 0, 0);
+            d.setDate(d.getDate() + offset);
+            if (offset === 0) return `Сегодня · ${d.getDate()}`;
+            if (offset === 1) return `Завтра · ${d.getDate()}`;
+            const weekday = d.toLocaleDateString("ru-RU", {weekday: "short"}).replace(".", "");
+            return `${weekday.charAt(0).toUpperCase()}${weekday.slice(1)} · ${d.getDate()}`;
+        }
+
+        function selectDayButton(selected) {
+            document.querySelectorAll("#dayButtons [data-offset]").forEach(button => {
+                const active = button === selected;
+                button.classList.toggle("btn-primary", active);
+                button.classList.toggle("btn-outline-primary", !active);
+                button.setAttribute("aria-pressed", active ? "true" : "false");
+            });
+        }
+
+        function setupDates() {
+            const buttons = [...document.querySelectorAll("#dayButtons [data-offset]")];
+            buttons.forEach(button => button.textContent = formatDateButton(button));
+            if (buttons[0]) selectDayButton(buttons[0]);
+        }
+
+        function setupBrowserMode() {
+            if (isTelegram) return;
+            ["#teachersTab", "#sessionTab", "#ratingTab", "#adminTab"].forEach(target => {
+                const button = document.querySelector(`[data-bs-target="${target}"]`);
+                button?.closest("li")?.classList.add("d-none");
+            });
+            const tabs = document.getElementById("mainTabs");
+            if (tabs && !document.getElementById("uxBrowserNotice")) {
+                const notice = document.createElement("div");
+                notice.id = "uxBrowserNotice";
+                notice.className = "alert alert-info ux-browser-notice py-2 small";
+                notice.textContent = "Публичный режим: доступно расписание по группе. Сессия, рейтинг, подписки и заметки доступны при открытии Mini App из Telegram.";
+                tabs.insertAdjacentElement("afterend", notice);
+            }
+            setTimeout(() => {
+                const view = document.getElementById("scheduleView");
+                const group = document.getElementById("groupSelect")?.value;
+                if (view && !group && /не удалось загрузить|расписание не найдено/i.test(view.textContent || "")) {
+                    view.innerHTML = '<div class="alert alert-secondary">Выберите факультет, курс и группу, чтобы открыть расписание.</div>';
+                }
+            }, 800);
+        }
+
+        function statusBadge(status) {
+            const labels = {
+                idle: ["secondary", "Ожидание"],
+                queued: ["info", "В очереди"],
+                running: ["primary", "Выполняется"],
+                success: ["success", "Готово"],
+                error: ["danger", "Ошибка"],
+                cancelled: ["secondary", "Отменено"],
+            };
+            const [color, label] = labels[status] || ["secondary", status || "—"];
+            return `<span class="badge text-bg-${color}">${label}</span>`;
+        }
+
+        const esc = value => String(value ?? "").replace(/[&<>"']/g, ch => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[ch]));
+
+        function renderJob(job) {
+            if (!job || typeof job !== "object") return "";
+            const names = {
+                schedule_sync: "Расписание",
+                rating_update: "Рейтинг",
+                db_import: "Восстановление БД",
+                broadcast: "Рассылка",
+            };
+            const updated = job.updated_at ? new Date(job.updated_at).toLocaleString("ru-RU") : "—";
+            return `<div class="ux-admin-card">
+                <div class="d-flex justify-content-between gap-2 align-items-center mb-1">
+                    <strong>${esc(names[job.name] || job.name || "Задача")}</strong>${statusBadge(job.status)}
+                </div>
+                <div class="small">${esc(job.message || "")}</div>
+                <div class="small text-muted mt-1">${esc(updated)}</div>
+            </div>`;
+        }
+
+        function renderAdminData(data) {
+            const target = document.getElementById("uxAdminOutput");
+            if (!target) return;
+            if (data?.name && data?.status) {
+                target.innerHTML = renderJob(data);
+                return;
+            }
+            if (data && typeof data === "object" && Object.values(data).length && Object.values(data).every(v => v && typeof v === "object" && "status" in v && "name" in v)) {
+                target.innerHTML = `<div class="row g-2">${Object.values(data).map(job => `<div class="col-12 col-md-6">${renderJob(job)}</div>`).join("")}</div>`;
+                return;
+            }
+            if (data?.jobs) {
+                const jobsHtml = Object.values(data.jobs).map(renderJob).join("");
+                target.innerHTML = `<div class="mb-2"><strong>Фоновые задачи</strong></div>${jobsHtml}`;
+                return;
+            }
+            target.innerHTML = `<div class="ux-admin-card"><pre class="mb-0 small" style="white-space:pre-wrap;color:inherit">${esc(JSON.stringify(data, null, 2))}</pre></div>`;
+        }
+
+        function setupAdminOutput() {
+            const raw = document.getElementById("adminOutput");
+            if (!raw || document.getElementById("uxAdminOutput")) return;
+            const pretty = document.createElement("div");
+            pretty.id = "uxAdminOutput";
+            raw.insertAdjacentElement("afterend", pretty);
+            const observer = new MutationObserver(() => {
+                const text = raw.textContent.trim();
+                if (!text) return;
+                try { renderAdminData(JSON.parse(text)); } catch (_) {}
+            });
+            observer.observe(raw, {childList: true, characterData: true, subtree: true});
+        }
+
+        async function pollAdminJobs() {
+            clearTimeout(jobsPollTimer);
+            if (!isTelegram) return;
+            try {
+                const response = await nativeFetch("/api/admin/jobs", {
+                    headers: {"X-Telegram-Init-Data": tg.initData},
+                });
+                if (!response.ok) return;
+                const data = await response.json();
+                renderAdminData(data);
+                const active = Object.values(data).some(job => ["queued", "running"].includes(job.status));
+                if (active) jobsPollTimer = setTimeout(pollAdminJobs, 1400);
+            } catch (_) {}
+        }
+
+        function setupTelegramBackButton() {
+            if (!isTelegram || !tg?.BackButton) return;
+            const scheduleButton = document.querySelector('[data-bs-target="#scheduleTab"]');
+            const back = () => scheduleButton?.click();
+            tg.BackButton.onClick(back);
+            document.querySelectorAll('#mainTabs [data-bs-toggle="tab"]').forEach(button => {
+                button.addEventListener("shown.bs.tab", event => {
+                    if (event.target?.dataset?.bsTarget === "#scheduleTab") tg.BackButton.hide();
+                    else tg.BackButton.show();
+                });
+            });
+            tg.BackButton.hide();
+        }
+
+        function wrapCriticalInitializers() {
+            if (typeof window.loadFaculties === "function" && !window.loadFaculties.__uxWrapped) {
+                const original = window.loadFaculties;
+                const wrapped = async (...args) => {
+                    try { return await original(...args); }
+                    catch (error) {
+                        toast("Не удалось загрузить список факультетов. Нажмите «Обновить» и попробуйте ещё раз.");
+                        return [];
+                    }
+                };
+                wrapped.__uxWrapped = true;
+                window.loadFaculties = wrapped;
+            }
+        }
+
+        document.addEventListener("click", event => {
+            const day = event.target.closest("#dayButtons [data-offset]");
+            if (day) selectDayButton(day);
+
+            const adminJob = event.target.closest("[data-admin-job]");
+            if (adminJob && ["schedule_sync", "rating_update"].includes(adminJob.dataset.adminJob) && !adminJob.dataset.uxConfirmed) {
+                event.preventDefault();
+                event.stopImmediatePropagation();
+                const label = adminJob.dataset.adminJob === "schedule_sync" ? "Запустить полное обновление расписания?" : "Запустить полное обновление рейтинга?";
+                askConfirm(label).then(ok => {
+                    if (!ok) return;
+                    adminJob.dataset.uxConfirmed = "1";
+                    adminJob.click();
+                    setTimeout(() => delete adminJob.dataset.uxConfirmed, 0);
+                    setTimeout(pollAdminJobs, 350);
+                });
+                return;
+            }
+            if (adminJob?.dataset.uxConfirmed) delete adminJob.dataset.uxConfirmed;
+
+            const asyncButton = event.target.closest(
+                "#refreshBtn, #dayButtons button, #teacherSearchForm button, #teacherPrev, #teacherNext, #teacherSubscribe, " +
+                "#recordBookForm button, #refreshSessionBtn, #saveNoteBtn, #addCheckBtn, #loadRatingBtn, #subjectSearchForm button, " +
+                "[data-teacher], [data-subject], [data-check-toggle], [data-check-delete], [data-admin-job], " +
+                "#adminStatusBtn, #adminExpelledBtn, #adminExportBtn"
+            );
+            if (asyncButton && !asyncButton.disabled) markBusy(asyncButton);
+        }, true);
+
+        document.addEventListener("submit", event => {
+            const form = event.target;
+            const configs = {
+                dbImportForm: "Восстановить рабочую базу из выбранного файла? Данные будут заменены только после серверной проверки копии.",
+                ratingImportForm: "Импортировать выбранные рейтинговые данные?",
+                broadcastForm: "Отправить эту рассылку всем зарегистрированным пользователям?",
+            };
+            const message = configs[form.id];
+            if (message && !form.dataset.uxConfirmed) {
+                event.preventDefault();
+                event.stopImmediatePropagation();
+                askConfirm(message).then(ok => {
+                    if (!ok) return;
+                    form.dataset.uxConfirmed = "1";
+                    form.requestSubmit();
+                    setTimeout(() => delete form.dataset.uxConfirmed, 0);
+                    if (["dbImportForm", "broadcastForm"].includes(form.id)) setTimeout(pollAdminJobs, 350);
+                });
+                return;
+            }
+            if (form.dataset.uxConfirmed) delete form.dataset.uxConfirmed;
+            markBusy(form.querySelector('button[type="submit"]'));
+        }, true);
+
+        document.addEventListener("DOMContentLoaded", () => {
+            if (isTelegram) {
+                document.body.classList.add("tg-miniapp");
+                applyTelegramTheme();
+                applySafeArea();
+                tg.ready?.();
+                tg.expand?.();
+                tg.onEvent?.("themeChanged", applyTelegramTheme);
+                tg.onEvent?.("safeAreaChanged", applySafeArea);
+                tg.onEvent?.("contentSafeAreaChanged", applySafeArea);
+            }
+            wrapCriticalInitializers();
+            setupDates();
+            setupBrowserMode();
+            setupAdminOutput();
+            setupTelegramBackButton();
+        });
+    })();
+    </script>
 
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
     {% block scripts %}{% endblock %}
