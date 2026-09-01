@@ -1,6 +1,10 @@
 import asyncio
+import os
 
 import pytest
+
+os.environ.setdefault("TELEGRAM_BOT_TOKEN", "123456789:AABBCcDDEEFFGG")
+os.environ.setdefault("ADMIN_ID", "42")
 
 
 @pytest.fixture()
@@ -79,6 +83,15 @@ async def test_usage_event_rejects_unknown_feature(isolated_db):
 
     with pytest.raises(ValueError, match="unknown feature"):
         await record_usage_event(100, "made_up_feature")
+
+
+def test_miniapp_entrypoint_exposes_analytics_routes():
+    from app.web.entrypoint import app
+
+    paths = {route.path for route in app.routes}
+    assert "/api/analytics/event" in paths
+    assert "/api/admin/analytics" in paths
+    assert "/miniapp-enhancements.js" in paths
 
 
 def test_miniapp_enhancement_has_archive_navigation_without_generated_forecast():
