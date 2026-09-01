@@ -19,9 +19,10 @@ def main():
             logging.info("Bot stopped.")
     elif args.mode == "web":
         logging.info("Starting Web App...")
-        # Reload is useful for dev, but in docker we might want it off.
-        # We can use env var for reload.
-        uvicorn.run("app.web.app:app", host="0.0.0.0", port=8000, reload=False)
+        # entrypoint extends the existing FastAPI app with Mini App analytics
+        # and complete stored-schedule navigation while keeping app.web.app
+        # import-compatible for legacy callers and tests.
+        uvicorn.run("app.web.entrypoint:app", host="0.0.0.0", port=8000, reload=False)
 
 if __name__ == "__main__":
     sys.path.append(".") # Ensure current dir is in path
