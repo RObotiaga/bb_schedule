@@ -1,472 +1,70 @@
-{% extends "base.html" %}
-
-{% block title %}USURT Mini App{% endblock %}
-
-{% block content %}
-<div class="app-shell">
-    {% if error %}
-    <div class="alert alert-danger" role="alert">{{ error }}</div>
-    {% endif %}
-
-    <div class="d-flex justify-content-between align-items-start gap-3 mb-3">
-        <div>
-            <h1 class="h3 mb-1">Расписание УрГУПС</h1>
-            <div class="text-muted small" id="profileLine">Загрузка профиля...</div>
-        </div>
-        <button class="btn btn-outline-secondary btn-sm" id="refreshBtn" type="button">Обновить</button>
-    </div>
-
-    <ul class="nav nav-tabs flex-nowrap overflow-auto mb-3" id="mainTabs" role="tablist">
-        <li class="nav-item"><button class="nav-link active" data-bs-toggle="tab" data-bs-target="#scheduleTab" type="button">Расписание</button></li>
-        <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#teachersTab" type="button">Преподаватели</button></li>
-        <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#sessionTab" type="button">Сессия</button></li>
-        <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#ratingTab" type="button">Рейтинг</button></li>
-        <li class="nav-item d-none" id="adminTabBtn"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#adminTab" type="button">Админ</button></li>
-    </ul>
-
-    <div class="tab-content">
-        <section class="tab-pane fade show active" id="scheduleTab">
-            <form class="row g-2 align-items-end mb-3" id="groupForm">
-                <div class="col-12 col-md-4">
-                    <label class="form-label" for="facultySelect">Факультет</label>
-                    <select class="form-select" id="facultySelect"></select>
-                </div>
-                <div class="col-6 col-md-3">
-                    <label class="form-label" for="courseSelect">Курс</label>
-                    <select class="form-select" id="courseSelect" disabled></select>
-                </div>
-                <div class="col-6 col-md-3">
-                    <label class="form-label" for="groupSelect">Группа</label>
-                    <select class="form-select" id="groupSelect" disabled></select>
-                </div>
-                <div class="col-12 col-md-2 d-grid">
-                    <button class="btn btn-primary" type="submit">Показать</button>
-                </div>
-            </form>
-            <div class="btn-group w-100 mb-3" role="group" id="dayButtons">
-                <button class="btn btn-outline-primary" data-offset="0" type="button">Сегодня</button>
-                <button class="btn btn-outline-primary" data-offset="1" type="button">Завтра</button>
-                <button class="btn btn-outline-primary" data-offset="2" type="button">+2</button>
-                <button class="btn btn-outline-primary" data-offset="3" type="button">+3</button>
-                <button class="btn btn-outline-primary" data-offset="4" type="button">+4</button>
-                <button class="btn btn-outline-primary" data-offset="5" type="button">+5</button>
-            </div>
-            <div id="scheduleView"></div>
-        </section>
-
-        <section class="tab-pane fade" id="teachersTab">
-            <form class="input-group mb-3" id="teacherSearchForm">
-                <input class="form-control" id="teacherQuery" placeholder="Фамилия преподавателя" autocomplete="off">
-                <button class="btn btn-primary" type="submit">Найти</button>
-            </form>
-            <div class="list-group mb-3" id="teacherMatches"></div>
-            <div class="d-flex gap-2 mb-3">
-                <button class="btn btn-outline-secondary btn-sm" id="teacherPrev" type="button">Пред. день</button>
-                <button class="btn btn-outline-secondary btn-sm" id="teacherNext" type="button">След. день</button>
-                <button class="btn btn-outline-primary btn-sm ms-auto" id="teacherSubscribe" type="button" disabled>Подписка</button>
-            </div>
-            <div id="teacherScheduleView"></div>
-        </section>
-
-        <section class="tab-pane fade" id="sessionTab">
-            <form class="input-group mb-3" id="recordBookForm">
-                <input class="form-control" id="recordBookInput" inputmode="numeric" placeholder="Номер зачётной книжки">
-                <button class="btn btn-primary" type="submit">Показать</button>
-                <button class="btn btn-outline-secondary" id="refreshSessionBtn" type="button">Обновить</button>
-            </form>
-            <div class="row g-2 mb-3" id="settingsBox"></div>
-            <div id="sessionView"></div>
-            <div id="noteEditor" class="mt-3 d-none">
-                <h2 class="h6" id="noteSubject"></h2>
-                <textarea class="form-control mb-2" id="noteText" rows="3" placeholder="Заметка"></textarea>
-                <div class="input-group mb-2">
-                    <input class="form-control" id="checkText" placeholder="Новый пункт чек-листа">
-                    <button class="btn btn-outline-primary" id="addCheckBtn" type="button">Добавить</button>
-                </div>
-                <div id="checkList"></div>
-                <button class="btn btn-primary mt-2" id="saveNoteBtn" type="button">Сохранить заметку</button>
-            </div>
-        </section>
-
-        <section class="tab-pane fade" id="ratingTab">
-            <button class="btn btn-primary btn-sm mb-3" id="loadRatingBtn" type="button">Загрузить рейтинг группы</button>
-            <form class="input-group mb-3" id="subjectSearchForm">
-                <input class="form-control" id="subjectQuery" placeholder="Поиск предмета">
-                <button class="btn btn-outline-primary" type="submit">Найти</button>
-            </form>
-            <div id="ratingView"></div>
-            <div class="list-group" id="subjectView"></div>
-        </section>
-
-        <section class="tab-pane fade" id="adminTab">
-            <div class="d-flex flex-wrap gap-2 mb-3">
-                <button class="btn btn-outline-primary btn-sm" data-admin-job="schedule_sync" type="button">Обновить расписание</button>
-                <button class="btn btn-outline-primary btn-sm" data-admin-job="reload_structure" type="button">Перезагрузить структуру</button>
-                <button class="btn btn-outline-primary btn-sm" data-admin-job="rating_update" type="button">Обновить рейтинг</button>
-                <button class="btn btn-outline-secondary btn-sm" id="adminStatusBtn" type="button">Статус</button>
-                <button class="btn btn-outline-secondary btn-sm" id="adminExportBtn" type="button">Экспорт рейтинга</button>
-                <button class="btn btn-outline-secondary btn-sm" id="adminExpelledBtn" type="button">Отчисления</button>
-            </div>
-            <div class="row g-2 mb-3">
-                <form class="col-12 col-md-6" id="ratingImportForm">
-                    <label class="form-label" for="ratingImportFile">Импорт рейтинга (.json/.gz)</label>
-                    <div class="input-group">
-                        <input class="form-control" id="ratingImportFile" type="file" accept=".json,.gz">
-                        <button class="btn btn-outline-primary" type="submit">Импорт</button>
-                    </div>
-                </form>
-                <form class="col-12 col-md-6" id="dbImportForm">
-                    <label class="form-label" for="dbImportFile">Загрузить БД (.db)</label>
-                    <div class="input-group">
-                        <input class="form-control" id="dbImportFile" type="file" accept=".db">
-                        <button class="btn btn-outline-primary" type="submit">Загрузить</button>
-                    </div>
-                </form>
-            </div>
-            <form class="mb-3" id="broadcastForm">
-                <label class="form-label" for="broadcastText">Рассылка</label>
-                <textarea class="form-control mb-2" id="broadcastText" rows="3"></textarea>
-                <input class="form-control mb-2" id="broadcastFile" type="file">
-                <button class="btn btn-primary btn-sm" type="submit">Отправить рассылку</button>
-            </form>
-            <form class="row g-2 mb-3" id="adminGroupForm">
-                <div class="col">
-                    <input class="form-control" id="adminGroupInput" placeholder="Группа для статистики">
-                </div>
-                <div class="col-auto">
-                    <button class="btn btn-outline-primary" type="submit">Открыть</button>
-                </div>
-            </form>
-            <pre class="bg-light p-3 rounded small" id="adminOutput"></pre>
-        </section>
-    </div>
-</div>
-{% endblock %}
-
-{% block scripts %}
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="color-scheme" content="light dark">
+  <title>Расписание УрГУПС</title>
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+  <style>
+    :root{--bg:var(--tg-theme-secondary-bg-color,#f2f3f5);--surface:var(--tg-theme-bg-color,#fff);--text:var(--tg-theme-text-color,#16181d);--muted:var(--tg-theme-hint-color,#7b8089);--accent:var(--tg-theme-button-color,#2aabee);--accent-text:var(--tg-theme-button-text-color,#fff);--danger:var(--tg-theme-destructive-text-color,#e54b4b);--separator:color-mix(in srgb,var(--muted) 22%,transparent);--accent-soft:color-mix(in srgb,var(--accent) 12%,var(--surface));--success:#2aa867;--warning:#df8b16;--nav-h:72px}
+    *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}html,body{margin:0;min-height:100%;background:var(--bg);color:var(--text)}body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial,sans-serif;font-size:15px;line-height:1.35;overscroll-behavior-y:none;padding:max(10px,var(--tg-content-safe-area-inset-top,0px)) max(12px,var(--tg-content-safe-area-inset-right,0px)) calc(var(--nav-h) + 18px + max(8px,var(--tg-content-safe-area-inset-bottom,0px))) max(12px,var(--tg-content-safe-area-inset-left,0px))}button,input,select,textarea{font:inherit;color:inherit}button{border:0}.app{width:min(100%,760px);margin:auto}.screen{display:none}.screen.active{display:block;animation:appear .16s ease-out}@keyframes appear{from{opacity:.35;transform:translateY(2px)}to{opacity:1;transform:none}}
+    .topbar{display:flex;align-items:center;justify-content:space-between;gap:12px;min-height:48px;margin-bottom:12px}.eyebrow{color:var(--muted);font-size:12px;font-weight:650;margin-bottom:2px}h1{margin:0;font-size:26px;line-height:1.1;letter-spacing:-.5px}h2{margin:0;font-size:18px}.icon-btn{width:42px;height:42px;border-radius:50%;display:grid;place-items:center;background:var(--surface);color:var(--text);box-shadow:0 8px 28px rgba(0,0,0,.06);cursor:pointer}.icon-btn:active,.day-chip:active,.nav-btn:active,.action:active{transform:scale(.98)}
+    .profile-row{display:flex;gap:8px;align-items:center;margin-bottom:12px;min-height:30px}.profile-pill,.status-pill,.badge{display:inline-flex;align-items:center;gap:6px;border-radius:999px;padding:6px 10px;background:var(--surface);color:var(--muted);font-size:12px;font-weight:650}.profile-pill{color:var(--text);max-width:70%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.status-dot{width:7px;height:7px;border-radius:50%;background:var(--success);flex:none}.status-dot.offline{background:var(--danger)}
+    .day-strip{display:grid;grid-auto-flow:column;grid-auto-columns:minmax(62px,1fr);gap:7px;overflow-x:auto;scrollbar-width:none;padding:2px 1px 10px;scroll-snap-type:x proximity}.day-strip::-webkit-scrollbar{display:none}.day-chip{scroll-snap-align:start;min-width:62px;padding:9px 8px;border-radius:15px;background:var(--surface);text-align:center;cursor:pointer;box-shadow:0 1px 0 var(--separator);transition:.12s}.day-chip .dow{display:block;color:var(--muted);font-size:11px;font-weight:650;text-transform:uppercase}.day-chip .num{display:block;margin-top:2px;font-size:17px;font-weight:750}.day-chip.active{background:var(--accent);color:var(--accent-text);box-shadow:none}.day-chip.active .dow{color:color-mix(in srgb,var(--accent-text) 78%,transparent)}
+    .hero{background:var(--surface);border-radius:22px;padding:17px;margin-bottom:10px;box-shadow:0 8px 28px rgba(0,0,0,.06)}.hero-line{display:flex;justify-content:space-between;align-items:flex-start;gap:10px}.hero-title{font-size:18px;font-weight:760}.hero-sub{margin-top:5px;color:var(--muted);font-size:13px}.group-btn{background:var(--accent-soft);color:var(--accent);padding:8px 11px;border-radius:12px;font-size:12px;font-weight:750;cursor:pointer;white-space:nowrap}.section-label{margin:16px 4px 8px;color:var(--muted);font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.35px}
+    .schedule-list{display:grid;gap:8px}.lesson{position:relative;display:grid;grid-template-columns:68px minmax(0,1fr);gap:12px;padding:14px 14px 14px 12px;border-radius:16px;background:var(--surface);box-shadow:0 1px 0 var(--separator);overflow:hidden}.lesson:before{content:"";position:absolute;left:0;top:13px;bottom:13px;width:3px;border-radius:4px;background:var(--separator)}.lesson.now{background:var(--accent-soft);box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--accent) 22%,transparent)}.lesson.now:before{background:var(--accent)}.lesson.subscription:before{background:var(--warning)}.time{font-size:14px;font-weight:780;color:var(--accent);padding-left:4px}.time-end{display:block;margin-top:2px;font-size:11px;color:var(--muted);font-weight:600}.subject{font-size:15px;font-weight:720;line-height:1.25}.meta{margin-top:6px;display:flex;flex-wrap:wrap;gap:5px 9px;color:var(--muted);font-size:12px}.meta-item{display:inline-flex;align-items:center;gap:4px;min-width:0}.badge{padding:3px 7px;font-size:10px;background:var(--accent-soft);color:var(--accent)}.badge.warn{color:var(--warning);background:color-mix(in srgb,var(--warning) 12%,var(--surface))}
+    .empty,.error-card,.loading-card{padding:22px 18px;text-align:center;border-radius:22px;background:var(--surface);color:var(--muted)}.empty strong,.error-card strong{display:block;color:var(--text);margin-bottom:5px}.error-card{color:var(--danger)}.search{position:relative;display:flex;align-items:center;background:var(--surface);border-radius:15px;padding:0 12px;min-height:48px;box-shadow:0 1px 0 var(--separator)}.search input{flex:1;min-width:0;border:0;outline:0;background:transparent;padding:12px 8px}.search button{background:transparent;color:var(--accent);font-weight:720;cursor:pointer;padding:10px 4px 10px 10px}.list{margin-top:10px;background:var(--surface);border-radius:16px;overflow:hidden}.list-row{width:100%;display:flex;align-items:center;justify-content:space-between;gap:12px;min-height:52px;padding:12px 14px;background:transparent;text-align:left;cursor:pointer;border-bottom:1px solid var(--separator)}.list-row:last-child{border-bottom:0}.list-row-title{font-weight:680;min-width:0}.list-row-sub{margin-top:3px;color:var(--muted);font-size:12px}.chevron{color:var(--muted);font-size:18px}.teacher-head{display:flex;align-items:center;gap:8px;margin:12px 0 8px}.teacher-head .spacer{flex:1}.mini-btn,.action{border-radius:12px;background:var(--surface);color:var(--accent);font-weight:720;cursor:pointer;padding:9px 12px;box-shadow:0 1px 0 var(--separator)}.mini-btn.primary,.action.primary{background:var(--accent);color:var(--accent-text);box-shadow:none}
+    .summary-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin:10px 0}.stat{background:var(--surface);border-radius:15px;padding:13px;text-align:center}.stat-value{font-size:20px;font-weight:800}.stat-label{margin-top:3px;color:var(--muted);font-size:11px}.grade{font-weight:800}.grade.ok{color:var(--success)}.grade.bad{color:var(--danger)}.actions{display:grid;gap:8px;margin-top:10px}.action{min-height:52px;display:flex;align-items:center;justify-content:space-between;gap:10px;padding:13px 14px;text-align:left;color:var(--text)}.action strong{display:block;font-size:14px}.action span{display:block;margin-top:2px;color:var(--muted);font-size:12px;font-weight:500}details.panel{background:var(--surface);border-radius:16px;margin-top:10px;overflow:hidden}details.panel summary{cursor:pointer;list-style:none;padding:14px;font-weight:680}details.panel summary::-webkit-details-marker{display:none}.panel-body{padding:0 14px 14px}.toggle-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px}.toggle{display:flex;align-items:center;gap:8px;background:var(--bg);border-radius:12px;padding:10px;font-size:12px}.toggle input{accent-color:var(--accent)}
+    .bottom-nav{position:fixed;z-index:20;left:max(10px,var(--tg-content-safe-area-inset-left,0px));right:max(10px,var(--tg-content-safe-area-inset-right,0px));bottom:max(8px,var(--tg-content-safe-area-inset-bottom,0px));height:var(--nav-h);display:grid;grid-template-columns:repeat(4,1fr);background:color-mix(in srgb,var(--surface) 94%,transparent);border:1px solid var(--separator);border-radius:22px;box-shadow:0 10px 36px rgba(0,0,0,.12);backdrop-filter:blur(18px);-webkit-backdrop-filter:blur(18px);overflow:hidden}.nav-btn{background:transparent;color:var(--muted);display:grid;place-items:center;align-content:center;gap:3px;cursor:pointer;padding:7px 4px}.nav-btn svg{width:21px;height:21px;stroke:currentColor;fill:none;stroke-width:1.9}.nav-btn span{font-size:10px;font-weight:650}.nav-btn.active{color:var(--accent)}
+    .sheet-backdrop{position:fixed;z-index:40;inset:0;background:rgba(0,0,0,.34);opacity:0;pointer-events:none;transition:opacity .16s ease}.sheet-backdrop.open{opacity:1;pointer-events:auto}.sheet{position:absolute;left:0;right:0;bottom:0;max-height:min(82vh,720px);overflow-y:auto;background:var(--bg);border-radius:24px 24px 0 0;padding:8px 14px calc(14px + max(8px,env(safe-area-inset-bottom)));transform:translateY(102%);transition:transform .2s ease}.sheet-backdrop.open .sheet{transform:none}.grabber{width:38px;height:4px;margin:2px auto 14px;border-radius:999px;background:var(--separator)}.sheet-head{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:12px}.sheet-close{background:var(--surface);width:34px;height:34px;border-radius:50%;cursor:pointer}.field{margin-bottom:10px}.field label{display:block;margin:0 0 5px 2px;color:var(--muted);font-size:11px;font-weight:650}.field input,.field select,.field textarea{width:100%;border:1px solid var(--separator);outline:none;border-radius:13px;padding:12px;background:var(--surface)}.sheet-actions{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:12px}.full{grid-column:1/-1}.toast{position:fixed;z-index:60;left:50%;bottom:calc(var(--nav-h) + 26px + max(8px,var(--tg-content-safe-area-inset-bottom,0px)));transform:translate(-50%,10px);max-width:calc(100vw - 32px);padding:10px 14px;border-radius:999px;background:var(--text);color:var(--surface);font-size:12px;font-weight:650;opacity:0;pointer-events:none;transition:.18s}.toast.show{opacity:1;transform:translate(-50%,0)}.fatal{margin-bottom:10px}@media(min-width:700px){body{padding-left:20px;padding-right:20px}.bottom-nav{left:50%;right:auto;width:min(720px,calc(100vw - 24px));transform:translateX(-50%)}}@media(prefers-reduced-motion:reduce){*,*:before,*:after{animation-duration:.001ms!important;transition-duration:.001ms!important}}
+  </style>
+</head>
+<body>
+<main class="app">
+{% if error %}<div class="error-card fatal"><strong>Не удалось открыть расписание</strong>{{ error }}</div>{% endif %}
+<section class="screen active" id="screen-schedule">
+<header class="topbar"><div><div class="eyebrow" id="scheduleEyebrow">УрГУПС</div><h1>Расписание</h1></div><button class="icon-btn" id="refreshBtn" aria-label="Обновить расписание"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 6v5h-5"/><path d="M4 18v-5h5"/><path d="M6.1 9a7 7 0 0 1 11.2-2L20 11M4 13l2.7 4A7 7 0 0 0 18 15"/></svg></button></header>
+<div class="profile-row"><div class="profile-pill" id="profilePill"><span class="status-dot"></span><span>Загрузка профиля…</span></div><div class="status-pill" id="networkPill">онлайн</div></div>
+<div class="day-strip" id="dayStrip" aria-label="Выбор дня"></div>
+<section class="hero"><div class="hero-line"><div><div class="hero-title" id="dayTitle">Сегодня</div><div class="hero-sub" id="daySubtitle">Загрузка расписания…</div></div><button class="group-btn" id="groupButton" type="button">Выбрать группу</button></div></section>
+<div id="scheduleView" class="schedule-list"><div class="loading-card">Загружаю расписание…</div></div>
+</section>
+<section class="screen" id="screen-teachers"><header class="topbar"><div><div class="eyebrow">Поиск и подписки</div><h1>Преподаватели</h1></div></header><form class="search" id="teacherSearchForm"><input id="teacherQuery" autocomplete="off" placeholder="Фамилия преподавателя" aria-label="Фамилия преподавателя"><button type="submit">Найти</button></form><div id="teacherMatches"></div><div id="teacherScheduleView"></div></section>
+<section class="screen" id="screen-session"><header class="topbar"><div><div class="eyebrow">Успеваемость</div><h1>Сессия</h1></div><button class="icon-btn" id="refreshSessionBtn" aria-label="Обновить результаты"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 6v5h-5"/><path d="M4 18v-5h5"/><path d="M6.1 9a7 7 0 0 1 11.2-2L20 11M4 13l2.7 4A7 7 0 0 0 18 15"/></svg></button></header><form class="search" id="recordBookForm"><input id="recordBookInput" inputmode="numeric" placeholder="Номер зачётной книжки"><button type="submit">Открыть</button></form><details class="panel"><summary>Фильтры результатов</summary><div class="panel-body"><div class="toggle-grid" id="settingsBox"></div></div></details><div id="sessionView"></div></section>
+<section class="screen" id="screen-more"><header class="topbar"><div><div class="eyebrow">Дополнительно</div><h1>Ещё</h1></div></header><div class="actions"><button class="action" id="changeGroupAction" type="button"><div><strong>Моя группа</strong><span id="moreGroup">Не выбрана</span></div><div class="chevron">›</div></button><button class="action" id="ratingAction" type="button"><div><strong>Рейтинг группы</strong><span>Позиция и закрываемость предметов</span></div><div class="chevron">›</div></button><button class="action" id="subjectsAction" type="button"><div><strong>Статистика предметов</strong><span>Поиск по всем дисциплинам</span></div><div class="chevron">›</div></button></div><section id="ratingPanel"></section><section id="subjectsPanel"></section><details class="panel" id="adminPanel" hidden><summary>Администрирование</summary><div class="panel-body"><div class="actions"><button class="action" data-admin-job="schedule_sync" type="button"><div><strong>Обновить расписание</strong><span>Запустить полную синхронизацию</span></div><div class="chevron">›</div></button><button class="action" data-admin-job="rating_update" type="button"><div><strong>Обновить рейтинг</strong><span>Запустить обновление успеваемости</span></div><div class="chevron">›</div></button><button class="action" id="adminStatusBtn" type="button"><div><strong>Статус задач</strong><span>Состояние фоновых операций</span></div><div class="chevron">›</div></button></div><pre id="adminOutput" style="white-space:pre-wrap;overflow:auto;font-size:11px;color:var(--muted)"></pre></div></details></section>
+</main>
+<nav class="bottom-nav" aria-label="Основная навигация"><button class="nav-btn active" data-screen="schedule" type="button"><svg viewBox="0 0 24 24"><path d="M4 5h16v15H4z"/><path d="M8 3v4M16 3v4M4 10h16"/></svg><span>Расписание</span></button><button class="nav-btn" data-screen="teachers" type="button"><svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 21c.7-4 3.3-6 8-6s7.3 2 8 6"/></svg><span>Преподаватели</span></button><button class="nav-btn" data-screen="session" type="button"><svg viewBox="0 0 24 24"><path d="M5 3h14v18H5z"/><path d="M8 8h8M8 12h8M8 16h5"/></svg><span>Сессия</span></button><button class="nav-btn" data-screen="more" type="button"><svg viewBox="0 0 24 24"><circle cx="5" cy="12" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="19" cy="12" r="1.5"/></svg><span>Ещё</span></button></nav>
+<div class="sheet-backdrop" id="groupSheet" aria-hidden="true"><div class="sheet" role="dialog" aria-modal="true"><div class="grabber"></div><div class="sheet-head"><h2>Выберите группу</h2><button class="sheet-close" data-close-sheet="groupSheet" type="button">×</button></div><div class="field"><label for="facultySelect">Факультет</label><select id="facultySelect"><option value="">Выберите факультет</option></select></div><div class="field"><label for="courseSelect">Курс</label><select id="courseSelect" disabled><option value="">Сначала факультет</option></select></div><div class="field"><label for="groupSelect">Группа</label><select id="groupSelect" disabled><option value="">Сначала курс</option></select></div><div class="sheet-actions"><button class="action primary full" id="saveGroupBtn" type="button">Сохранить группу</button></div></div></div>
+<div class="sheet-backdrop" id="noteSheet" aria-hidden="true"><div class="sheet" role="dialog" aria-modal="true"><div class="grabber"></div><div class="sheet-head"><h2 id="noteSubject">Заметка</h2><button class="sheet-close" data-close-sheet="noteSheet" type="button">×</button></div><div class="field"><label for="noteText">Заметка по предмету</label><textarea id="noteText" rows="4" placeholder="Что нужно повторить или сдать"></textarea></div><div class="field"><label for="checkText">Чек-лист</label><div class="search"><input id="checkText" placeholder="Новый пункт"><button id="addCheckBtn" type="button">Добавить</button></div></div><div class="list" id="checkList"></div><div class="sheet-actions"><button class="action primary full" id="saveNoteBtn" type="button">Сохранить</button></div></div></div>
+<div class="toast" id="toast"></div>
 <script>
-const tg = window.Telegram?.WebApp;
-if (tg) tg.expand();
-
-const state = {
-    initData: tg?.initData || "",
-    me: null,
-    group: null,
-    dayOffset: 0,
-    teacher: null,
-    teacherOffset: 0,
-    currentNoteSubject: null,
-    currentChecklist: [],
-    currentNoteText: "",
-};
-
-const authHeaders = () => state.initData ? {"X-Telegram-Init-Data": state.initData} : {};
-const api = async (url, options = {}) => {
-    const headers = {...authHeaders(), ...(options.headers || {})};
-    const response = await fetch(url, {...options, headers});
-    if (!response.ok) {
-        const text = await response.text();
-        throw new Error(text || response.statusText);
-    }
-    const type = response.headers.get("content-type") || "";
-    return type.includes("application/json") ? response.json() : response.text();
-};
-const esc = (value) => String(value ?? "").replace(/[&<>"']/g, ch => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[ch]));
-const setHtml = (id, html) => document.getElementById(id).innerHTML = html;
-const printAdmin = (data) => document.getElementById("adminOutput").textContent = JSON.stringify(data, null, 2);
-
-function renderSchedule(data) {
-    state.group = data.group || state.group;
-    if (!data.days?.length) {
-        setHtml("scheduleView", `<div class="alert alert-warning">Расписание не найдено.</div>`);
-        return;
-    }
-    setHtml("scheduleView", data.days.map(day => `
-        <section class="schedule-day mb-4">
-            <div class="d-flex justify-content-between align-items-center border-bottom pb-2 mb-2">
-                <h2 class="h6 mb-0">${esc(day.date_display)}</h2>
-                <span class="badge text-bg-secondary">${esc(day.week_type || "")}</span>
-            </div>
-            ${day.lessons.map(lesson => `
-                <div class="lesson-row py-2 border-bottom">
-                    <div class="fw-semibold text-primary">${esc(lesson.time)} ${lesson.is_subscription ? '<span class="badge text-bg-info">подписка</span>' : ""}</div>
-                    <div>${esc(lesson.subject)}</div>
-                    <div class="small text-muted">${esc(lesson.teacher || "Не указан")} · ${esc(lesson.location || "")}${lesson.group_name && lesson.group_name !== data.group ? " · " + esc(lesson.group_name) : ""}</div>
-                </div>
-            `).join("")}
-        </section>
-    `).join(""));
-}
-
-async function loadSchedule(dayOffset = state.dayOffset) {
-    state.dayOffset = dayOffset;
-    const params = new URLSearchParams();
-    if (state.group) params.set("group", state.group);
-    params.set("day_offset", dayOffset);
-    try {
-        renderSchedule(await api(`/api/schedule?${params}`));
-    } catch (error) {
-        setHtml("scheduleView", `<div class="alert alert-danger">Не удалось загрузить расписание.</div>`);
-    }
-}
-
-async function loadFaculties() {
-    const faculties = await api("/api/faculties");
-    const facultySelect = document.getElementById("facultySelect");
-    facultySelect.innerHTML = `<option value="">Факультет...</option>` + faculties.map(f => `<option>${esc(f)}</option>`).join("");
-}
-
-async function loadMe() {
-    if (!state.initData) {
-        document.getElementById("profileLine").textContent = "Открыто вне Telegram: доступен публичный выбор группы.";
-        return;
-    }
-    try {
-        const data = await api("/api/me");
-        state.me = data;
-        state.group = data.group;
-        document.getElementById("profileLine").textContent = `${data.user.first_name || data.user.username || data.user.id}${data.group ? " · " + data.group : ""}`;
-        document.getElementById("recordBookInput").value = data.record_book || "";
-        renderSettings(data.settings || {});
-        if (data.is_admin) document.getElementById("adminTabBtn").classList.remove("d-none");
-    } catch (error) {
-        document.getElementById("profileLine").textContent = "Не удалось проверить Telegram-профиль.";
-    }
-}
-
-function renderSettings(settings) {
-    const labels = {
-        hide_5: "Скрыть 5",
-        hide_4: "Скрыть 4",
-        hide_3: "Скрыть 3",
-        hide_2: "Скрыть 2",
-        hide_passed_non_exam: "Скрыть зачёты",
-        hide_failed: "Скрыть долги",
-    };
-    setHtml("settingsBox", Object.entries(labels).map(([key, label]) => `
-        <label class="col-6 col-md-4 small">
-            <input class="form-check-input session-setting" type="checkbox" data-key="${key}" ${settings[key] ? "checked" : ""}> ${label}
-        </label>
-    `).join(""));
-}
-
-function renderSession(data) {
-    const summary = data.summary;
-    if (!summary) {
-        setHtml("sessionView", `<div class="alert alert-warning">Результаты не найдены.</div>`);
-        return;
-    }
-    const rows = data.results.map(item => `
-        <button class="list-group-item list-group-item-action" data-note-subject="${esc(item.subject)}">
-            <div class="d-flex justify-content-between gap-2">
-                <span>${esc(item.subject)}</span>
-                <span class="${item.passed ? "text-success" : "text-danger"}">${esc(item.grade)}</span>
-            </div>
-            <div class="small text-muted">${esc(item.semester || "")}${item.date ? " · " + esc(item.date) : ""}</div>
-        </button>
-    `).join("");
-    setHtml("sessionView", `
-        <div class="alert alert-info">Закрыто: ${summary.passed}/${summary.total} (${summary.pass_rate}%), долгов: ${summary.debts}</div>
-        <div class="list-group">${rows}</div>
-    `);
-}
-
-async function openNote(subject) {
-    state.currentNoteSubject = subject;
-    const note = await api(`/api/session/notes?subject=${encodeURIComponent(subject)}`);
-    state.currentChecklist = note.checklist || [];
-    state.currentNoteText = note.note_text || "";
-    document.getElementById("noteEditor").classList.remove("d-none");
-    document.getElementById("noteSubject").textContent = subject;
-    document.getElementById("noteText").value = state.currentNoteText;
-    renderChecklist();
-}
-
-function renderChecklist() {
-    setHtml("checkList", state.currentChecklist.map((item, idx) => `
-        <div class="d-flex align-items-center gap-2 py-1">
-            <button class="btn btn-sm ${item.done ? "btn-success" : "btn-outline-secondary"}" data-check-toggle="${idx}" type="button">${item.done ? "Готово" : "Пункт"}</button>
-            <span class="flex-grow-1">${esc(item.text)}</span>
-            <button class="btn btn-sm btn-outline-danger" data-check-delete="${idx}" type="button">Удалить</button>
-        </div>
-    `).join(""));
-}
-
-async function loadTeacherSchedule() {
-    if (!state.teacher) return;
-    const data = await api(`/api/teachers/${encodeURIComponent(state.teacher)}/schedule?day_offset=${state.teacherOffset}`);
-    document.getElementById("teacherSubscribe").disabled = false;
-    document.getElementById("teacherSubscribe").textContent = data.is_subscribed ? "Отписаться" : "Подписаться";
-    setHtml("teacherScheduleView", `
-        <h2 class="h6">${esc(data.teacher)} · ${esc(data.date_display)}</h2>
-        ${data.lessons.length ? data.lessons.map(lesson => `
-            <div class="py-2 border-bottom">
-                <div class="fw-semibold text-primary">${esc(lesson.time)} · ${esc((lesson.groups || []).join(", "))}</div>
-                <div>${esc(lesson.subject)}</div>
-                <div class="small text-muted">${esc(lesson.location)}</div>
-            </div>
-        `).join("") : '<div class="alert alert-warning">Расписание отсутствует.</div>'}
-    `);
-}
-
-document.addEventListener("DOMContentLoaded", async () => {
-    await loadFaculties();
-    await loadMe();
-    await loadSchedule(0);
-
-    document.getElementById("refreshBtn").addEventListener("click", () => { loadMe(); loadSchedule(state.dayOffset); });
-    document.getElementById("dayButtons").addEventListener("click", event => {
-        const button = event.target.closest("button[data-offset]");
-        if (button) loadSchedule(Number(button.dataset.offset));
-    });
-
-    document.getElementById("facultySelect").addEventListener("change", async event => {
-        const faculty = event.target.value;
-        const courseSelect = document.getElementById("courseSelect");
-        const groupSelect = document.getElementById("groupSelect");
-        groupSelect.disabled = true;
-        groupSelect.innerHTML = "";
-        if (!faculty) return;
-        const courses = await api(`/api/courses/${encodeURIComponent(faculty)}`);
-        courseSelect.innerHTML = `<option value="">Курс...</option>` + courses.map(c => `<option>${esc(c)}</option>`).join("");
-        courseSelect.disabled = false;
-    });
-
-    document.getElementById("courseSelect").addEventListener("change", async event => {
-        const faculty = document.getElementById("facultySelect").value;
-        const groups = await api(`/api/groups/${encodeURIComponent(faculty)}/${encodeURIComponent(event.target.value)}`);
-        const groupSelect = document.getElementById("groupSelect");
-        groupSelect.innerHTML = `<option value="">Группа...</option>` + groups.map(g => `<option>${esc(g)}</option>`).join("");
-        groupSelect.disabled = false;
-    });
-
-    document.getElementById("groupForm").addEventListener("submit", async event => {
-        event.preventDefault();
-        const group = document.getElementById("groupSelect").value;
-        if (!group) return;
-        state.group = group;
-        if (state.initData) await api("/api/me/group", {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({group})});
-        await loadSchedule(0);
-    });
-
-    document.getElementById("teacherSearchForm").addEventListener("submit", async event => {
-        event.preventDefault();
-        const q = document.getElementById("teacherQuery").value;
-        const data = await api(`/api/teachers/search?q=${encodeURIComponent(q)}`);
-        setHtml("teacherMatches", data.teachers.map(t => `<button class="list-group-item list-group-item-action" data-teacher="${esc(t)}">${esc(t)}</button>`).join(""));
-    });
-    document.getElementById("teacherMatches").addEventListener("click", event => {
-        const button = event.target.closest("[data-teacher]");
-        if (!button) return;
-        state.teacher = button.dataset.teacher;
-        state.teacherOffset = 0;
-        loadTeacherSchedule();
-    });
-    document.getElementById("teacherPrev").addEventListener("click", () => { state.teacherOffset -= 1; loadTeacherSchedule(); });
-    document.getElementById("teacherNext").addEventListener("click", () => { state.teacherOffset += 1; loadTeacherSchedule(); });
-    document.getElementById("teacherSubscribe").addEventListener("click", async event => {
-        const subscribed = event.target.textContent !== "Отписаться";
-        await api(`/api/teachers/${encodeURIComponent(state.teacher)}/subscribe`, {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({subscribed})});
-        await loadTeacherSchedule();
-    });
-
-    document.getElementById("recordBookForm").addEventListener("submit", async event => {
-        event.preventDefault();
-        const record_book = document.getElementById("recordBookInput").value;
-        renderSession(await api("/api/session/results", {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({record_book})}));
-    });
-    document.getElementById("refreshSessionBtn").addEventListener("click", async () => renderSession(await api("/api/session/results?refresh=true")));
-    document.getElementById("settingsBox").addEventListener("change", async () => {
-        const settings = Object.fromEntries([...document.querySelectorAll(".session-setting")].map(input => [input.dataset.key, input.checked]));
-        await api("/api/me/settings", {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({settings})});
-        try { renderSession(await api("/api/session/results")); } catch (_) {}
-    });
-    document.getElementById("sessionView").addEventListener("click", event => {
-        const button = event.target.closest("[data-note-subject]");
-        if (button) openNote(button.dataset.noteSubject);
-    });
-    document.getElementById("saveNoteBtn").addEventListener("click", async () => {
-        const note = await api("/api/session/notes", {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({subject: state.currentNoteSubject, note_text: document.getElementById("noteText").value, checklist: state.currentChecklist})});
-        state.currentChecklist = note.checklist || [];
-        renderChecklist();
-    });
-    document.getElementById("addCheckBtn").addEventListener("click", async () => {
-        const text = document.getElementById("checkText").value;
-        const note = await api("/api/session/notes/checklist", {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({subject: state.currentNoteSubject, action: "add", text})});
-        state.currentChecklist = note.checklist || [];
-        document.getElementById("checkText").value = "";
-        renderChecklist();
-    });
-    document.getElementById("checkList").addEventListener("click", async event => {
-        const toggle = event.target.closest("[data-check-toggle]");
-        const del = event.target.closest("[data-check-delete]");
-        const index = Number((toggle || del)?.dataset.checkToggle ?? (toggle || del)?.dataset.checkDelete);
-        if (!Number.isInteger(index)) return;
-        const action = toggle ? "toggle" : "delete";
-        const note = await api("/api/session/notes/checklist", {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({subject: state.currentNoteSubject, action, index})});
-        state.currentChecklist = note.checklist || [];
-        renderChecklist();
-    });
-
-    document.getElementById("loadRatingBtn").addEventListener("click", async () => {
-        const data = await api("/api/rating/group");
-        setHtml("ratingView", `<div class="list-group mb-3">${data.students.map(s => `<div class="list-group-item ${s.is_current ? "active" : ""}">${s.position}. ${esc(s.record_book)} — ${s.passed}/${s.total} (${s.pass_rate}%)</div>`).join("")}</div>`);
-    });
-    document.getElementById("subjectSearchForm").addEventListener("submit", async event => {
-        event.preventDefault();
-        const q = document.getElementById("subjectQuery").value;
-        const data = await api(`/api/subjects?q=${encodeURIComponent(q)}`);
-        setHtml("subjectView", data.subjects.map(s => `<button class="list-group-item list-group-item-action" data-subject="${esc(s)}">${esc(s)}</button>`).join(""));
-    });
-    document.getElementById("subjectView").addEventListener("click", async event => {
-        const button = event.target.closest("[data-subject]");
-        if (!button) return;
-        const data = await api(`/api/subjects/${encodeURIComponent(button.dataset.subject)}/stats`);
-        button.innerHTML = `${esc(data.subject)}<div class="small text-muted">Закрываемость: ${data.stats.person_pass_rate}% (${data.stats.passed_persons}/${data.stats.total_persons})</div>`;
-    });
-
-    document.querySelectorAll("[data-admin-job]").forEach(button => button.addEventListener("click", async () => printAdmin(await api(`/api/admin/jobs/${button.dataset.adminJob}/start`, {method: "POST"}))));
-    document.getElementById("adminStatusBtn").addEventListener("click", async () => printAdmin(await api("/api/admin/status")));
-    document.getElementById("adminExpelledBtn").addEventListener("click", async () => printAdmin(await api("/api/admin/expelled")));
-    document.getElementById("adminExportBtn").addEventListener("click", async () => {
-        const response = await fetch("/api/admin/rating/export", {headers: authHeaders()});
-        if (!response.ok) throw new Error(await response.text());
-        const blob = await response.blob();
-        const url = URL.createObjectURL(blob);
-        const link = document.createElement("a");
-        link.href = url;
-        link.download = "rating_export.json.gz";
-        link.click();
-        URL.revokeObjectURL(url);
-    });
-    document.getElementById("ratingImportForm").addEventListener("submit", async event => {
-        event.preventDefault();
-        const file = document.getElementById("ratingImportFile").files[0];
-        if (!file) return;
-        const form = new FormData();
-        form.append("file", file);
-        printAdmin(await api("/api/admin/rating/import", {method: "POST", body: form}));
-    });
-    document.getElementById("dbImportForm").addEventListener("submit", async event => {
-        event.preventDefault();
-        const file = document.getElementById("dbImportFile").files[0];
-        if (!file) return;
-        const form = new FormData();
-        form.append("file", file);
-        printAdmin(await api("/api/admin/db/import", {method: "POST", body: form}));
-    });
-    document.getElementById("broadcastForm").addEventListener("submit", async event => {
-        event.preventDefault();
-        const form = new FormData();
-        form.append("text", document.getElementById("broadcastText").value);
-        const file = document.getElementById("broadcastFile").files[0];
-        if (file) form.append("file", file);
-        printAdmin(await api("/api/admin/broadcast", {method: "POST", body: form}));
-    });
-    document.getElementById("adminGroupForm").addEventListener("submit", async event => {
-        event.preventDefault();
-        printAdmin(await api(`/api/admin/group/${encodeURIComponent(document.getElementById("adminGroupInput").value)}`));
-    });
-});
+const tg=window.Telegram?.WebApp;const state={initData:tg?.initData||"",me:null,group:null,dayOffset:0,teacher:null,teacherOffset:0,sessionLoaded:false,currentNoteSubject:null,currentChecklist:[],openSheet:null};const $=id=>document.getElementById(id);const esc=value=>String(value??"").replace(/[&<>"']/g,ch=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[ch]));const authHeaders=()=>state.initData?{"X-Telegram-Init-Data":state.initData}:{};
+async function api(url,options={}){const headers={...authHeaders(),...(options.headers||{})};const r=await fetch(url,{...options,headers});if(!r.ok){let d=r.statusText;try{const p=await r.json();d=p.detail||d}catch(_){}throw new Error(d)}return(r.headers.get("content-type")||"").includes("application/json")?r.json():r.text()}
+function haptic(kind="selection"){try{if(!tg?.HapticFeedback)return;if(kind==="success")tg.HapticFeedback.notificationOccurred("success");else if(kind==="error")tg.HapticFeedback.notificationOccurred("error");else tg.HapticFeedback.selectionChanged()}catch(_){}}let toastTimer;function toast(message,kind="selection"){haptic(kind);$("toast").textContent=message;$("toast").classList.add("show");clearTimeout(toastTimer);toastTimer=setTimeout(()=>$("toast").classList.remove("show"),2200)}
+function initTelegram(){if(!tg)return;tg.ready();tg.expand();try{tg.setHeaderColor("bg_color");tg.setBackgroundColor("secondary_bg_color");tg.setBottomBarColor("bg_color")}catch(_){}tg.onEvent?.("themeChanged",()=>{try{tg.setHeaderColor("bg_color");tg.setBottomBarColor("bg_color")}catch(_){}});tg.BackButton?.onClick(()=>{if(state.openSheet)closeSheet(state.openSheet)})}function updateNetwork(){const online=navigator.onLine;$("networkPill").innerHTML=`<span class="status-dot ${online?"":"offline"}"></span>${online?"онлайн":"нет сети"}`}
+function openSheet(id){const el=$(id);if(!el)return;if(state.openSheet&&state.openSheet!==id)closeSheet(state.openSheet);state.openSheet=id;el.classList.add("open");el.setAttribute("aria-hidden","false");tg?.BackButton?.show();haptic()}function closeSheet(id){const el=$(id);if(!el)return;el.classList.remove("open");el.setAttribute("aria-hidden","true");if(state.openSheet===id)state.openSheet=null;if(!state.openSheet)tg?.BackButton?.hide()}function switchScreen(name){document.querySelectorAll(".screen").forEach(el=>el.classList.toggle("active",el.id===`screen-${name}`));document.querySelectorAll(".nav-btn").forEach(el=>el.classList.toggle("active",el.dataset.screen===name));window.scrollTo({top:0,behavior:"instant"});haptic();if(name==="session"&&!state.sessionLoaded&&state.me?.record_book)loadSession(false)}
+function buildDayStrip(){const today=new Date(),labels=["вс","пн","вт","ср","чт","пт","сб"],items=[];for(let offset=0;offset<8;offset++){const d=new Date(today);d.setDate(today.getDate()+offset);const label=offset===0?"сег":offset===1?"зав":labels[d.getDay()];items.push(`<button class="day-chip ${offset===state.dayOffset?"active":""}" data-offset="${offset}" type="button"><span class="dow">${label}</span><span class="num">${d.getDate()}</span></button>`)}$("dayStrip").innerHTML=items.join("")}
+function splitTime(raw){const times=String(raw||"").match(/\d{1,2}:\d{2}/g)||[];return{start:times[0]||raw||"",end:times[1]||""}}function minutesOf(text){const m=String(text||"").match(/(\d{1,2}):(\d{2})/);return m?Number(m[1])*60+Number(m[2]):null}function lessonStatus(lesson,offset){if(offset!==0)return"";const{start,end}=splitTime(lesson.time),s=minutesOf(start),e=minutesOf(end);if(s==null)return"";const now=new Date(),cur=now.getHours()*60+now.getMinutes();return e!=null&&cur>=s&&cur<=e?"now":""}
+function updateGroupLabels(){$("groupButton").textContent=state.group||"Выбрать группу";$("moreGroup").textContent=state.group||"Не выбрана";if(state.group)$("scheduleEyebrow").textContent=state.group}
+function renderSchedule(data){state.group=data.group||state.group;updateGroupLabels();buildDayStrip();if(!data.days?.length){$("dayTitle").textContent=state.dayOffset===0?"Сегодня":"На этот день";$("daySubtitle").textContent=state.group?`${state.group} · занятий нет`:"Выберите группу";$("scheduleView").innerHTML=`<div class="empty"><strong>Пар нет</strong>${state.dayOffset===0?"Сегодня можно выдохнуть.":"На выбранный день расписание пустое."}</div>`;return}const day=data.days[0],count=day.lessons?.length||0;$("dayTitle").textContent=day.date_display||day.date;$("daySubtitle").textContent=`${state.group||data.group} · ${count} ${count===1?"пара":count<5?"пары":"пар"}${day.week_type?" · "+day.week_type:""}`;$("scheduleView").innerHTML=(day.lessons||[]).map(lesson=>{const t=splitTime(lesson.time),status=lessonStatus(lesson,state.dayOffset);return`<article class="lesson ${status} ${lesson.is_subscription?"subscription":""}"><div class="time">${esc(t.start)}${t.end?`<span class="time-end">${esc(t.end)}</span>`:""}</div><div><div class="subject">${esc(lesson.subject)}</div><div class="meta">${lesson.teacher?`<span class="meta-item">${esc(lesson.teacher)}</span>`:""}${lesson.location?`<span class="meta-item">Ауд. ${esc(lesson.location)}</span>`:""}${lesson.group_name&&lesson.group_name!==data.group?`<span class="meta-item">${esc(lesson.group_name)}</span>`:""}${status==="now"?`<span class="badge">сейчас</span>`:""}${lesson.is_subscription?`<span class="badge warn">подписка</span>`:""}</div></div></article>`}).join("")}
+async function loadSchedule(offset=state.dayOffset,quiet=false){state.dayOffset=offset;buildDayStrip();if(!state.group){$("daySubtitle").textContent="Сначала выберите свою группу";$("scheduleView").innerHTML=`<div class="empty"><strong>Группа не выбрана</strong>Выберите её один раз — дальше расписание будет открываться сразу.</div>`;return}if(!quiet)$("scheduleView").innerHTML=`<div class="loading-card">Загружаю расписание…</div>`;try{const p=new URLSearchParams({group:state.group,day_offset:String(offset)});renderSchedule(await api(`/api/schedule?${p}`))}catch(e){$("scheduleView").innerHTML=`<div class="error-card"><strong>Не удалось загрузить расписание</strong>${esc(e.message)}</div>`}}
+async function loadFaculties(){try{const data=await api("/api/faculties");$("facultySelect").innerHTML=`<option value="">Выберите факультет</option>`+data.map(f=>`<option value="${esc(f)}">${esc(f)}</option>`).join("")}catch(_){toast("Не удалось загрузить факультеты","error")}}async function loadMe(){if(!state.initData){$("profilePill").innerHTML=`<span class="status-dot"></span><span>Открыто вне Telegram</span>`;$("scheduleEyebrow").textContent="Публичный просмотр";return}try{const data=await api("/api/me");state.me=data;state.group=data.group;$("recordBookInput").value=data.record_book||"";const name=data.user.first_name||data.user.username||`ID ${data.user.id}`;$("profilePill").innerHTML=`<span class="status-dot"></span><span>${esc(name)}${data.group?" · "+esc(data.group):""}</span>`;renderSettings(data.settings||{});$("adminPanel").hidden=!data.is_admin;updateGroupLabels()}catch(_){$("profilePill").innerHTML=`<span class="status-dot offline"></span><span>Ошибка авторизации</span>`}}
+function renderSettings(settings){const labels={hide_5:"Скрыть 5",hide_4:"Скрыть 4",hide_3:"Скрыть 3",hide_2:"Скрыть 2",hide_passed_non_exam:"Скрыть зачёты",hide_failed:"Скрыть долги"};$("settingsBox").innerHTML=Object.entries(labels).map(([key,label])=>`<label class="toggle"><input class="session-setting" type="checkbox" data-key="${key}" ${settings[key]?"checked":""}>${label}</label>`).join("")}
+async function loadTeacherSchedule(){if(!state.teacher)return;if(!state.initData){$("teacherScheduleView").innerHTML=`<div class="empty"><strong>Нужен Telegram</strong>Расписание преподавателя и подписки доступны из бота.</div>`;return}try{const data=await api(`/api/teachers/${encodeURIComponent(state.teacher)}/schedule?day_offset=${state.teacherOffset}`);$("teacherMatches").innerHTML="";$("teacherScheduleView").innerHTML=`<div class="teacher-head"><button class="mini-btn" id="teacherPrev" type="button">‹ День</button><div class="spacer"></div><button class="mini-btn primary" id="teacherSubscribe" type="button">${data.is_subscribed?"Отписаться":"Подписаться"}</button><button class="mini-btn" id="teacherNext" type="button">День ›</button></div><section class="hero"><div class="hero-title">${esc(data.teacher)}</div><div class="hero-sub">${esc(data.date_display)}</div></section><div class="schedule-list">${data.lessons.length?data.lessons.map(lesson=>{const t=splitTime(lesson.time);return`<article class="lesson"><div class="time">${esc(t.start)}${t.end?`<span class="time-end">${esc(t.end)}</span>`:""}</div><div><div class="subject">${esc(lesson.subject)}</div><div class="meta"><span>${esc((lesson.groups||[]).join(", "))}</span>${lesson.location?`<span>Ауд. ${esc(lesson.location)}</span>`:""}</div></div></article>`}).join(""):`<div class="empty"><strong>Пар нет</strong>На выбранный день занятий не найдено.</div>`}</div>`;$("teacherPrev").onclick=()=>{state.teacherOffset--;loadTeacherSchedule();haptic()};$("teacherNext").onclick=()=>{state.teacherOffset++;loadTeacherSchedule();haptic()};$("teacherSubscribe").onclick=async()=>{const subscribed=!data.is_subscribed;await api(`/api/teachers/${encodeURIComponent(state.teacher)}/subscribe`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({subscribed})});toast(subscribed?"Подписка включена":"Подписка отключена","success");loadTeacherSchedule()}}catch(e){$("teacherScheduleView").innerHTML=`<div class="error-card"><strong>Не удалось загрузить</strong>${esc(e.message)}</div>`}}
+function renderSession(data){state.sessionLoaded=true;if(!data.summary){$("sessionView").innerHTML=`<div class="empty"><strong>Результаты не найдены</strong>Проверьте номер зачётной книжки.</div>`;return}const s=data.summary;$("sessionView").innerHTML=`<div class="summary-grid"><div class="stat"><div class="stat-value">${s.pass_rate}%</div><div class="stat-label">закрыто</div></div><div class="stat"><div class="stat-value">${s.passed}/${s.total}</div><div class="stat-label">предметов</div></div><div class="stat"><div class="stat-value">${s.debts}</div><div class="stat-label">долгов</div></div></div><div class="list">${(data.results||[]).map(item=>`<button class="list-row" data-note-subject="${esc(item.subject)}" type="button"><div><div class="list-row-title">${esc(item.subject)}</div><div class="list-row-sub">${esc(item.semester||"")}${item.date?" · "+esc(item.date):""}</div></div><div class="grade ${item.passed?"ok":"bad"}">${esc(item.grade)}</div></button>`).join("")}</div>`}
+async function loadSession(refresh=false){if(!state.initData){$("sessionView").innerHTML=`<div class="empty"><strong>Нужен Telegram</strong>Результаты сессии привязаны к вашему профилю.</div>`;return}try{$("sessionView").innerHTML=`<div class="loading-card">Загружаю результаты…</div>`;renderSession(await api(`/api/session/results${refresh?"?refresh=true":""}`))}catch(e){$("sessionView").innerHTML=String(e.message).includes("record_book")?`<div class="empty"><strong>Укажите зачётную книжку</strong>Введите номер выше — он сохранится в профиле.</div>`:`<div class="error-card"><strong>Не удалось загрузить</strong>${esc(e.message)}</div>`}}
+async function openNote(subject){state.currentNoteSubject=subject;try{const note=await api(`/api/session/notes?subject=${encodeURIComponent(subject)}`);state.currentChecklist=note.checklist||[];$("noteSubject").textContent=subject;$("noteText").value=note.note_text||"";renderChecklist();openSheet("noteSheet")}catch(_){toast("Не удалось открыть заметку","error")}}function renderChecklist(){$("checkList").innerHTML=state.currentChecklist.length?state.currentChecklist.map((item,index)=>`<div class="list-row"><button class="mini-btn ${item.done?"primary":""}" data-check-toggle="${index}" type="button">${item.done?"✓":"○"}</button><div class="list-row-title" style="${item.done?"text-decoration:line-through;color:var(--muted)":""};flex:1">${esc(item.text)}</div><button class="mini-btn" data-check-delete="${index}" type="button">×</button></div>`).join(""):`<div class="list-row"><div class="list-row-sub">Пока пусто</div></div>`}
+async function loadRating(){if(!state.initData){$("ratingPanel").innerHTML=`<div class="empty"><strong>Нужен Telegram</strong>Рейтинг привязан к зачётной книжке.</div>`;return}$("ratingPanel").innerHTML=`<div class="loading-card">Загружаю рейтинг…</div>`;try{const data=await api("/api/rating/group");$("ratingPanel").innerHTML=`<div class="section-label">Рейтинг группы</div><div class="list">${data.students?.length?data.students.map(s=>`<div class="list-row" style="${s.is_current?"background:var(--accent-soft)":""}"><div><div class="list-row-title">${s.position}. ${esc(s.record_book)}${s.is_current?" · вы":""}</div><div class="list-row-sub">${s.passed}/${s.total} · ${s.pass_rate}%</div></div></div>`).join(""):`<div class="list-row"><div class="list-row-sub">Данных пока нет</div></div>`}</div>`}catch(e){$("ratingPanel").innerHTML=`<div class="error-card"><strong>Не удалось загрузить рейтинг</strong>${esc(e.message)}</div>`}}
+function showSubjectSearch(){$("subjectsPanel").innerHTML=`<div class="section-label">Статистика предметов</div><form class="search" id="subjectSearchForm"><input id="subjectQuery" placeholder="Название предмета"><button type="submit">Найти</button></form><div id="subjectView"></div>`;$("subjectSearchForm").onsubmit=async e=>{e.preventDefault();const q=$("subjectQuery").value.trim(),data=await api(`/api/subjects?q=${encodeURIComponent(q)}`);$("subjectView").innerHTML=`<div class="list">${data.subjects.map(s=>`<button class="list-row" data-subject="${esc(s)}" type="button"><div class="list-row-title">${esc(s)}</div><div class="chevron">›</div></button>`).join("")}</div>`};$("subjectView").onclick=async e=>{const b=e.target.closest("[data-subject]");if(!b)return;try{const data=await api(`/api/subjects/${encodeURIComponent(b.dataset.subject)}/stats`);b.innerHTML=`<div><div class="list-row-title">${esc(data.subject)}</div><div class="list-row-sub">Закрываемость: ${data.stats.person_pass_rate}% · ${data.stats.passed_persons}/${data.stats.total_persons}</div></div>`}catch(_){toast("Статистика недоступна","error")}}}
+async function saveGroup(){const group=$("groupSelect").value;if(!group)return toast("Выберите группу","error");state.group=group;if(state.initData){try{await api("/api/me/group",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({group})})}catch(_){return toast("Не удалось сохранить группу","error")}}closeSheet("groupSheet");state.dayOffset=0;updateGroupLabels();await loadSchedule(0);toast(`Группа ${group} сохранена`,"success")}
+function bindEvents(){document.querySelectorAll(".nav-btn").forEach(b=>b.addEventListener("click",()=>switchScreen(b.dataset.screen)));document.querySelectorAll("[data-close-sheet]").forEach(b=>b.addEventListener("click",()=>closeSheet(b.dataset.closeSheet)));document.querySelectorAll(".sheet-backdrop").forEach(b=>b.addEventListener("click",e=>{if(e.target===b)closeSheet(b.id)}));$("dayStrip").addEventListener("click",e=>{const b=e.target.closest("[data-offset]");if(b){state.dayOffset=Number(b.dataset.offset);loadSchedule(state.dayOffset);haptic()}});$("refreshBtn").addEventListener("click",async()=>{haptic();await loadMe();await loadSchedule(state.dayOffset,true);toast("Расписание обновлено","success")});$("groupButton").onclick=()=>openSheet("groupSheet");$("changeGroupAction").onclick=()=>openSheet("groupSheet");$("saveGroupBtn").onclick=saveGroup;
+$("facultySelect").addEventListener("change",async e=>{const f=e.target.value;$("groupSelect").disabled=true;$("groupSelect").innerHTML=`<option value="">Сначала курс</option>`;if(!f){$("courseSelect").disabled=true;$("courseSelect").innerHTML=`<option value="">Сначала факультет</option>`;return}const data=await api(`/api/courses/${encodeURIComponent(f)}`);$("courseSelect").innerHTML=`<option value="">Выберите курс</option>`+data.map(c=>`<option value="${esc(c)}">${esc(c)}</option>`).join("");$("courseSelect").disabled=false});$("courseSelect").addEventListener("change",async e=>{const f=$("facultySelect").value,c=e.target.value;if(!f||!c)return;const data=await api(`/api/groups/${encodeURIComponent(f)}/${encodeURIComponent(c)}`);$("groupSelect").innerHTML=`<option value="">Выберите группу</option>`+data.map(g=>`<option value="${esc(g)}">${esc(g)}</option>`).join("");$("groupSelect").disabled=false});
+$("teacherSearchForm").addEventListener("submit",async e=>{e.preventDefault();const q=$("teacherQuery").value.trim();if(!q)return;try{const data=await api(`/api/teachers/search?q=${encodeURIComponent(q)}`);$("teacherScheduleView").innerHTML="";$("teacherMatches").innerHTML=`<div class="list">${data.teachers.map(t=>`<button class="list-row" data-teacher="${esc(t)}" type="button"><div class="list-row-title">${esc(t)}</div><div class="chevron">›</div></button>`).join("")}</div>`}catch(_){toast("Поиск не удался","error")}});$("teacherMatches").addEventListener("click",e=>{const b=e.target.closest("[data-teacher]");if(!b)return;state.teacher=b.dataset.teacher;state.teacherOffset=0;loadTeacherSchedule();haptic()});
+$("recordBookForm").addEventListener("submit",async e=>{e.preventDefault();if(!state.initData)return loadSession(false);const record_book=$("recordBookInput").value.trim();if(!/^\d+$/.test(record_book))return toast("Номер должен состоять из цифр","error");try{$("sessionView").innerHTML=`<div class="loading-card">Загружаю результаты…</div>`;renderSession(await api("/api/session/results",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({record_book})}));toast("Зачётная книжка сохранена","success")}catch(err){$("sessionView").innerHTML=`<div class="error-card"><strong>Не удалось загрузить</strong>${esc(err.message)}</div>`}});$("refreshSessionBtn").onclick=()=>loadSession(true);$("settingsBox").addEventListener("change",async()=>{if(!state.initData)return;const settings=Object.fromEntries([...document.querySelectorAll(".session-setting")].map(i=>[i.dataset.key,i.checked]));try{await api("/api/me/settings",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({settings})});if(state.sessionLoaded)await loadSession(false)}catch(_){toast("Не удалось сохранить фильтры","error")}});$("sessionView").addEventListener("click",e=>{const b=e.target.closest("[data-note-subject]");if(b)openNote(b.dataset.noteSubject)});
+$("saveNoteBtn").onclick=async()=>{try{const note=await api("/api/session/notes",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({subject:state.currentNoteSubject,note_text:$("noteText").value,checklist:state.currentChecklist})});state.currentChecklist=note.checklist||[];renderChecklist();toast("Заметка сохранена","success");closeSheet("noteSheet")}catch(_){toast("Не удалось сохранить заметку","error")}};$("addCheckBtn").onclick=async()=>{const text=$("checkText").value.trim();if(!text)return;try{const note=await api("/api/session/notes/checklist",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({subject:state.currentNoteSubject,action:"add",text})});state.currentChecklist=note.checklist||[];$("checkText").value="";renderChecklist();haptic()}catch(_){toast("Не удалось добавить пункт","error")}};$("checkList").addEventListener("click",async e=>{const t=e.target.closest("[data-check-toggle]"),d=e.target.closest("[data-check-delete]"),x=t||d;if(!x)return;const index=Number(t?t.dataset.checkToggle:d.dataset.checkDelete),action=t?"toggle":"delete";try{const note=await api("/api/session/notes/checklist",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({subject:state.currentNoteSubject,action,index})});state.currentChecklist=note.checklist||[];renderChecklist();haptic()}catch(_){toast("Не удалось изменить чек-лист","error")}});
+$("ratingAction").onclick=loadRating;$("subjectsAction").onclick=showSubjectSearch;document.querySelectorAll("[data-admin-job]").forEach(b=>b.addEventListener("click",async()=>{try{$("adminOutput").textContent=JSON.stringify(await api(`/api/admin/jobs/${b.dataset.adminJob}/start`,{method:"POST"}),null,2);toast("Задача запущена","success")}catch(e){toast(e.message,"error")}}));$("adminStatusBtn").onclick=async()=>{try{$("adminOutput").textContent=JSON.stringify(await api("/api/admin/status"),null,2)}catch(e){toast(e.message,"error")}};window.addEventListener("online",updateNetwork);window.addEventListener("offline",updateNetwork)}
+async function bootstrap(){initTelegram();updateNetwork();buildDayStrip();bindEvents();await Promise.all([loadFaculties(),loadMe()]);updateGroupLabels();await loadSchedule(0);if(!state.group)setTimeout(()=>openSheet("groupSheet"),250)}bootstrap();
 </script>
-{% endblock %}
+</body>
+</html>

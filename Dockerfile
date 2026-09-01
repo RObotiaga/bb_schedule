@@ -20,7 +20,8 @@ RUN pytest \
     tests/test_database_lifecycle.py \
     tests/test_database_restore.py \
     tests/test_database_backup.py \
-    tests/test_background_shutdown.py
+    tests/test_background_shutdown.py \
+    tests/test_miniapp_archive_analytics.py
 # Create a marker file to indicate tests passed
 RUN touch /tmp/tests_passed
 
