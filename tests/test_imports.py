@@ -15,7 +15,8 @@ def test_imports():
         from app.services import schedule_api, schedule_sync
         from app.bot import main, keyboards, states, filters
         from app.bot.handlers import common, schedule, teachers, session, admin
-        from app.web import app
+        from app.web import app, entrypoint
+        from app.core.repositories import analytics
         
         assert True
     except BaseException as e:
