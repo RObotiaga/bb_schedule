@@ -20,9 +20,9 @@ def isolated_db(tmp_path, monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_schedule_archive_returns_old_and_new_dates(isolated_db):
+async def test_schedule_range_and_exact_date_use_only_database_rows(isolated_db):
     from app.core.database import get_db_connection
-    from app.web.app import _schedule_for_group
+    from app.web.entrypoint import api_schedule_by_date, api_schedule_range
 
     db = await get_db_connection()
     rows = [
@@ -40,14 +40,24 @@ async def test_schedule_archive_returns_old_and_new_dates(isolated_db):
     )
     await db.commit()
 
-    days = await _schedule_for_group("СОт-512")
+    date_range = await api_schedule_range("СОт-512")
+    assert date_range == {
+        "group": "СОт-512",
+        "min_date": "2025-02-10",
+        "max_date": "2026-12-15",
+    }
 
-    assert [day["date"] for day in days] == ["2025-02-10", "2026-09-01", "2026-12-15"]
-    assert [day["lessons"][0]["subject"] for day in days] == [
-        "Старая дисциплина",
-        "Текущая дисциплина",
-        "Будущая дисциплина",
-    ]
+    current = await api_schedule_by_date("СОт-512", "2026-09-01", False, None)
+    assert len(current["days"]) == 1
+    assert current["days"][0]["lessons"][0]["subject"] == "Текущая дисциплина"
+
+    # A calendar day may be shown in the old-style strip, but no lesson is
+    # synthesized for it: an empty DB day stays empty.
+    missing = await api_schedule_by_date("СОт-512", "2026-09-02", False, None)
+    assert missing["days"] == []
+
+    future = await api_schedule_by_date("СОт-512", "2026-12-15", False, None)
+    assert future["days"][0]["lessons"][0]["subject"] == "Будущая дисциплина"
 
 
 @pytest.mark.asyncio
@@ -85,24 +95,40 @@ async def test_usage_event_rejects_unknown_feature(isolated_db):
         await record_usage_event(100, "made_up_feature")
 
 
-def test_miniapp_entrypoint_exposes_analytics_routes():
+def test_miniapp_entrypoint_exposes_schedule_and_analytics_routes():
     from app.web.entrypoint import app
 
     paths = {route.path for route in app.routes}
+    assert "/api/schedule/range" in paths
+    assert "/api/schedule/by-date" in paths
     assert "/api/analytics/event" in paths
     assert "/api/admin/analytics" in paths
     assert "/miniapp-enhancements.js" in paths
 
 
-def test_miniapp_enhancement_has_archive_navigation_without_generated_forecast():
+def test_date_strip_keeps_old_style_and_loads_both_directions_dynamically():
     from pathlib import Path
 
     script = Path("app/web/miniapp_enhancements.js").read_text(encoding="utf-8")
 
-    assert "/api/schedule?group=" in script
-    assert "Доступные даты в базе" in script
-    assert "archiveDateSelect" in script
-    assert "chooseNearestAvailableDate" in script
-    # The archive is built from data.days returned by the DB-backed endpoint,
-    # not by generating a fixed number of future calendar days.
-    assert "archive.days = (data.days || [])" in script
+    # Keep the existing compact weekday + day-number strip instead of a
+    # separate archive selector/page.
+    assert "day-chip" in script
+    assert "dayStrip" in script
+    assert "data-db-date" in script
+    assert "archiveControls" not in script
+    assert "archiveDateSelect" not in script
+
+    # Only date bounds are loaded first. The strip moves a bounded window and
+    # exact lesson rows are fetched only when the user selects a date.
+    assert "/api/schedule/range" in script
+    assert "/api/schedule/by-date" in script
+    assert "STRIP_LOAD_CHUNK_DAYS" in script
+    assert "MAX_STRIP_DAYS = 42" in script
+    assert 'shiftStripWindow("before")' in script
+    assert 'shiftStripWindow("after")' in script
+
+    # Calendar navigation may include empty days, but the schedule itself is
+    # never extrapolated or predicted client-side.
+    assert "predict" not in script.lower()
+    assert "forecast" not in script.lower()
