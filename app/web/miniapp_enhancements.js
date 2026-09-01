@@ -162,14 +162,13 @@
     if (!timeline.loadedStart || !timeline.loadedEnd) return [];
     const result = [];
     let current = timeline.loadedStart;
-    while (current <= timeline.loadedEnd && result.length <= MAX_STRIP_DAYS) {
+    while (current <= timeline.loadedEnd && result.length < MAX_STRIP_DAYS) {
       result.push(current);
       current = addDays(current, 1);
     }
     return result;
   }
 
-  const originalBuildDayStrip = buildDayStrip;
   buildDayStrip = function dynamicDatabaseDayStrip() {
     const strip = $("dayStrip");
     if (!timeline.loadedStart || !timeline.loadedEnd) {
@@ -284,7 +283,7 @@
     const target = clampDate(dateString);
     timeline.selectedDate = target;
     state.dayOffset = dayDifference(target);
-    timeline.centerNextRender = userInitiated;
+    if (userInitiated) timeline.centerNextRender = true;
 
     if (!quiet) $("scheduleView").innerHTML = `<div class="loading-card">Загружаю расписание…</div>`;
     const params = new URLSearchParams({group: state.group, date_value: target});
@@ -302,7 +301,6 @@
     }
   }
 
-  const originalLoadSchedule = loadSchedule;
   loadSchedule = async function databaseTimelineLoadSchedule(offset = state.dayOffset, quiet = false) {
     try {
       const ready = await ensureTimelineForGroup();
