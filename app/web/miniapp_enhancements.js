@@ -1,10 +1,5 @@
 (() => {
   const rawFetch = window.fetch.bind(window);
-  const archive = {
-    group: null,
-    days: [],
-    selectedDate: null,
-  };
 
   const featureNames = {
     miniapp_open: "Открытие Mini App",
@@ -46,7 +41,8 @@
   function featureForRequest(url, options = {}) {
     const method = String(options.method || "GET").toUpperCase();
     const path = String(url);
-    if (path.startsWith("/api/schedule")) return "schedule_view";
+    if (path.startsWith("/api/schedule/by-date")) return "schedule_view";
+    if (path.startsWith("/api/schedule?") || path === "/api/schedule") return "schedule_view";
     if (path === "/api/me/group" && method === "POST") return "schedule_group_change";
     if (path.startsWith("/api/teachers/search")) return "teacher_search";
     if (/^\/api\/teachers\/[^/]+\/schedule/.test(path)) return "teacher_schedule_view";
@@ -72,6 +68,23 @@
     return result;
   };
 
+  const STRIP_INITIAL_DAYS = 14;
+  const STRIP_LOAD_CHUNK_DAYS = 14;
+  const MAX_STRIP_DAYS = 42;
+  const STRIP_EDGE_PX = 110;
+
+  const timeline = {
+    group: null,
+    minDate: null,
+    maxDate: null,
+    selectedDate: null,
+    loadedStart: null,
+    loadedEnd: null,
+    shifting: false,
+    pendingAnchor: null,
+    centerNextRender: false,
+  };
+
   function localDateString(dateValue = new Date()) {
     const y = dateValue.getFullYear();
     const m = String(dateValue.getMonth() + 1).padStart(2, "0");
@@ -84,168 +97,251 @@
     return new Date(y, m - 1, d, 12, 0, 0, 0);
   }
 
+  function addDays(dateString, amount) {
+    const dt = parseLocalDate(dateString);
+    dt.setDate(dt.getDate() + Number(amount));
+    return localDateString(dt);
+  }
+
   function dayDifference(dateString) {
     const target = parseLocalDate(dateString);
     const today = parseLocalDate(localDateString());
     return Math.round((target - today) / 86400000);
   }
 
-  function chooseNearestAvailableDate(days) {
-    if (!days.length) return null;
-    const today = localDateString();
-    const exact = days.find(day => day.date === today);
-    if (exact) return exact.date;
-    const next = days.find(day => day.date > today);
-    if (next) return next.date;
-    return days[days.length - 1].date;
+  function daysInclusive(start, end) {
+    if (!start || !end || start > end) return 0;
+    return dayDifferenceFrom(start, end) + 1;
   }
 
-  function formatShortDate(dateString) {
-    const dt = parseLocalDate(dateString);
-    return new Intl.DateTimeFormat("ru-RU", {day: "2-digit", month: "2-digit", year: "numeric"}).format(dt);
+  function dayDifferenceFrom(start, end) {
+    return Math.round((parseLocalDate(end) - parseLocalDate(start)) / 86400000);
   }
 
-  function installArchiveControls() {
-    if ($("archiveControls")) return;
-    const controls = document.createElement("div");
-    controls.id = "archiveControls";
-    controls.innerHTML = `
-      <div class="archive-head">
-        <div>
-          <div class="archive-label">Доступные даты в базе</div>
-          <div class="archive-range" id="archiveRange">После выбора группы</div>
-        </div>
-        <button class="mini-btn" id="archiveNearestBtn" type="button">К текущей дате</button>
-      </div>
-      <select id="archiveDateSelect" class="archive-select" aria-label="Выбрать дату расписания" disabled>
-        <option>Нет данных</option>
-      </select>
-    `;
-    $("dayStrip").before(controls);
-
-    const style = document.createElement("style");
-    style.textContent = `
-      #archiveControls{margin:0 0 9px}.archive-head{display:flex;align-items:center;justify-content:space-between;gap:10px;margin:0 2px 8px}.archive-label{font-size:12px;font-weight:720;color:var(--text)}.archive-range{font-size:11px;color:var(--muted);margin-top:2px}.archive-select{width:100%;min-height:44px;border:1px solid var(--separator);border-radius:14px;padding:9px 12px;background:var(--surface);color:var(--text);outline:none}.analytics-card{margin-top:12px;padding:14px;border-radius:16px;background:var(--bg)}.analytics-list{display:grid;gap:7px;margin-top:10px}.analytics-row{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:12px;align-items:center;padding:10px 0;border-bottom:1px solid var(--separator)}.analytics-row:last-child{border-bottom:0}.analytics-name{font-size:13px;font-weight:680}.analytics-meta{font-size:11px;color:var(--muted);margin-top:2px}.analytics-count{font-size:14px;font-weight:800;color:var(--accent)}.never-list{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}.never-chip{font-size:10px;padding:5px 7px;border-radius:999px;background:color-mix(in srgb,var(--danger) 10%,var(--surface));color:var(--danger)}
-    `;
-    document.head.appendChild(style);
-
-    $("archiveDateSelect").addEventListener("change", event => {
-      selectArchiveDate(event.target.value, true);
-    });
-    $("archiveNearestBtn").addEventListener("click", () => {
-      const nearest = chooseNearestAvailableDate(archive.days);
-      if (nearest) selectArchiveDate(nearest, true);
-    });
-    $("dayStrip").addEventListener("click", event => {
-      const button = event.target.closest("[data-archive-date]");
-      if (!button) return;
-      event.preventDefault();
-      event.stopPropagation();
-      selectArchiveDate(button.dataset.archiveDate, true);
-    }, true);
+  function clampDate(dateString) {
+    if (!timeline.minDate || !timeline.maxDate) return dateString;
+    if (dateString < timeline.minDate) return timeline.minDate;
+    if (dateString > timeline.maxDate) return timeline.maxDate;
+    return dateString;
   }
 
-  function updateArchiveControls() {
-    const select = $("archiveDateSelect");
-    const range = $("archiveRange");
-    if (!select || !range) return;
+  function fullDateLabel(dateString) {
+    return new Intl.DateTimeFormat("ru-RU", {
+      weekday: "long",
+      day: "2-digit",
+      month: "2-digit",
+      year: "numeric",
+    }).format(parseLocalDate(dateString));
+  }
 
-    if (!archive.days.length) {
-      select.disabled = true;
-      select.innerHTML = "<option>Нет дат в базе</option>";
-      range.textContent = "Для этой группы расписание в базе отсутствует";
-      return;
+  function resetTimeline() {
+    timeline.group = null;
+    timeline.minDate = null;
+    timeline.maxDate = null;
+    timeline.selectedDate = null;
+    timeline.loadedStart = null;
+    timeline.loadedEnd = null;
+    timeline.pendingAnchor = null;
+    timeline.centerNextRender = false;
+  }
+
+  function setInitialWindow(selectedDate) {
+    let start = addDays(selectedDate, -Math.floor(STRIP_INITIAL_DAYS / 2));
+    if (start < timeline.minDate) start = timeline.minDate;
+    let end = addDays(start, STRIP_INITIAL_DAYS - 1);
+    if (end > timeline.maxDate) {
+      end = timeline.maxDate;
+      start = addDays(end, -(STRIP_INITIAL_DAYS - 1));
+      if (start < timeline.minDate) start = timeline.minDate;
     }
+    timeline.loadedStart = start;
+    timeline.loadedEnd = end;
+  }
 
-    select.disabled = false;
-    select.innerHTML = archive.days.map(day => {
-      const selected = day.date === archive.selectedDate ? " selected" : "";
-      return `<option value="${esc(day.date)}"${selected}>${esc(day.date_display || formatShortDate(day.date))}</option>`;
-    }).join("");
-    range.textContent = `${archive.days.length} дат · ${formatShortDate(archive.days[0].date)} — ${formatShortDate(archive.days[archive.days.length - 1].date)}`;
+  function loadedDates() {
+    if (!timeline.loadedStart || !timeline.loadedEnd) return [];
+    const result = [];
+    let current = timeline.loadedStart;
+    while (current <= timeline.loadedEnd && result.length <= MAX_STRIP_DAYS) {
+      result.push(current);
+      current = addDays(current, 1);
+    }
+    return result;
   }
 
   const originalBuildDayStrip = buildDayStrip;
-  buildDayStrip = function archiveDayStrip() {
-    if (!archive.days.length) {
-      $("dayStrip").innerHTML = "";
+  buildDayStrip = function dynamicDatabaseDayStrip() {
+    const strip = $("dayStrip");
+    if (!timeline.loadedStart || !timeline.loadedEnd) {
+      strip.innerHTML = "";
       return;
     }
-    let selectedIndex = archive.days.findIndex(day => day.date === archive.selectedDate);
-    if (selectedIndex < 0) selectedIndex = 0;
-    const start = Math.max(0, Math.min(selectedIndex - 4, archive.days.length - 9));
-    const visible = archive.days.slice(start, start + 9);
-    $("dayStrip").innerHTML = visible.map(day => {
-      const dt = parseLocalDate(day.date);
+
+    strip.innerHTML = loadedDates().map(dateString => {
+      const dt = parseLocalDate(dateString);
       const dow = new Intl.DateTimeFormat("ru-RU", {weekday: "short"}).format(dt).replace(".", "");
-      const active = day.date === archive.selectedDate ? " active" : "";
-      return `<button class="day-chip${active}" data-archive-date="${esc(day.date)}" type="button"><span class="dow">${esc(dow)}</span><span class="num">${dt.getDate()}</span></button>`;
+      const active = dateString === timeline.selectedDate ? " active" : "";
+      return `<button class="day-chip${active}" data-db-date="${esc(dateString)}" type="button"><span class="dow">${esc(dow)}</span><span class="num">${dt.getDate()}</span></button>`;
     }).join("");
+
+    requestAnimationFrame(() => {
+      if (timeline.pendingAnchor) {
+        const {date, visualLeft} = timeline.pendingAnchor;
+        const anchor = strip.querySelector(`[data-db-date="${date}"]`);
+        if (anchor) strip.scrollLeft = anchor.offsetLeft - visualLeft;
+        timeline.pendingAnchor = null;
+        return;
+      }
+      if (timeline.centerNextRender && timeline.selectedDate) {
+        const selected = strip.querySelector(`[data-db-date="${timeline.selectedDate}"]`);
+        selected?.scrollIntoView({behavior: "auto", block: "nearest", inline: "center"});
+        timeline.centerNextRender = false;
+      }
+    });
   };
 
-  function renderSelectedArchiveDay() {
-    const day = archive.days.find(item => item.date === archive.selectedDate);
-    if (!day) {
-      $("scheduleView").innerHTML = `<div class="empty"><strong>Расписание не найдено</strong>В базе нет выбранной даты.</div>`;
-      updateArchiveControls();
-      buildDayStrip();
-      return;
-    }
-    state.dayOffset = dayDifference(day.date);
-    renderSchedule({group: state.group, days: [day]});
-    updateArchiveControls();
+  function canLoadBefore() {
+    return Boolean(timeline.loadedStart && timeline.minDate && timeline.loadedStart > timeline.minDate);
   }
 
-  async function loadArchiveForGroup(quiet = false) {
+  function canLoadAfter() {
+    return Boolean(timeline.loadedEnd && timeline.maxDate && timeline.loadedEnd < timeline.maxDate);
+  }
+
+  function shiftStripWindow(direction) {
+    if (timeline.shifting) return;
+    if (direction === "before" && !canLoadBefore()) return;
+    if (direction === "after" && !canLoadAfter()) return;
+
+    const strip = $("dayStrip");
+    const anchorDate = direction === "before" ? timeline.loadedStart : timeline.loadedEnd;
+    const anchorElement = strip.querySelector(`[data-db-date="${anchorDate}"]`);
+    const visualLeft = anchorElement ? anchorElement.offsetLeft - strip.scrollLeft : 0;
+    timeline.pendingAnchor = {date: anchorDate, visualLeft};
+    timeline.shifting = true;
+
+    if (direction === "before") {
+      let newStart = addDays(timeline.loadedStart, -STRIP_LOAD_CHUNK_DAYS);
+      if (newStart < timeline.minDate) newStart = timeline.minDate;
+      timeline.loadedStart = newStart;
+      if (daysInclusive(timeline.loadedStart, timeline.loadedEnd) > MAX_STRIP_DAYS) {
+        timeline.loadedEnd = addDays(timeline.loadedStart, MAX_STRIP_DAYS - 1);
+      }
+    } else {
+      let newEnd = addDays(timeline.loadedEnd, STRIP_LOAD_CHUNK_DAYS);
+      if (newEnd > timeline.maxDate) newEnd = timeline.maxDate;
+      timeline.loadedEnd = newEnd;
+      if (daysInclusive(timeline.loadedStart, timeline.loadedEnd) > MAX_STRIP_DAYS) {
+        timeline.loadedStart = addDays(timeline.loadedEnd, -(MAX_STRIP_DAYS - 1));
+      }
+    }
+
+    buildDayStrip();
+    requestAnimationFrame(() => { timeline.shifting = false; });
+  }
+
+  function handleStripScroll() {
+    const strip = $("dayStrip");
+    if (!strip || timeline.shifting) return;
+    if (strip.scrollLeft <= STRIP_EDGE_PX) {
+      shiftStripWindow("before");
+      return;
+    }
+    if (strip.scrollLeft + strip.clientWidth >= strip.scrollWidth - STRIP_EDGE_PX) {
+      shiftStripWindow("after");
+    }
+  }
+
+  async function ensureTimelineForGroup() {
     if (!state.group) {
-      archive.group = null;
-      archive.days = [];
-      archive.selectedDate = null;
-      updateArchiveControls();
+      resetTimeline();
       buildDayStrip();
-      $("scheduleView").innerHTML = `<div class="empty"><strong>Группа не выбрана</strong>Выберите её один раз — после этого будут доступны все даты, реально сохранённые в базе.</div>`;
-      return;
+      return false;
+    }
+    if (timeline.group === state.group && timeline.minDate && timeline.maxDate) return true;
+
+    const range = await api(`/api/schedule/range?group=${encodeURIComponent(state.group)}`);
+    timeline.group = state.group;
+    timeline.minDate = range.min_date;
+    timeline.maxDate = range.max_date;
+
+    if (!timeline.minDate || !timeline.maxDate) {
+      timeline.selectedDate = null;
+      timeline.loadedStart = null;
+      timeline.loadedEnd = null;
+      buildDayStrip();
+      return false;
     }
 
-    if (!quiet) $("scheduleView").innerHTML = `<div class="loading-card">Загружаю все доступные даты…</div>`;
-    const data = await api(`/api/schedule?group=${encodeURIComponent(state.group)}`);
-    archive.group = state.group;
-    archive.days = (data.days || []).slice().sort((a, b) => a.date.localeCompare(b.date));
-    if (!archive.days.some(day => day.date === archive.selectedDate)) {
-      archive.selectedDate = chooseNearestAvailableDate(archive.days);
-    }
-    renderSelectedArchiveDay();
+    timeline.selectedDate = clampDate(localDateString());
+    setInitialWindow(timeline.selectedDate);
+    timeline.centerNextRender = true;
+    return true;
   }
 
-  async function selectArchiveDate(dateString, userInitiated = false) {
-    if (!archive.days.some(day => day.date === dateString)) return;
-    archive.selectedDate = dateString;
-    renderSelectedArchiveDay();
+  async function loadExactDate(dateString, quiet = false, userInitiated = false) {
+    if (!state.group) return;
+    const target = clampDate(dateString);
+    timeline.selectedDate = target;
+    state.dayOffset = dayDifference(target);
+    timeline.centerNextRender = userInitiated;
+
+    if (!quiet) $("scheduleView").innerHTML = `<div class="loading-card">Загружаю расписание…</div>`;
+    const params = new URLSearchParams({group: state.group, date_value: target});
+    const data = await api(`/api/schedule/by-date?${params}`);
+    renderSchedule(data);
+
+    if (!data.days?.length) {
+      $("dayTitle").textContent = fullDateLabel(target);
+      $("daySubtitle").textContent = `${state.group} · занятий в базе нет`;
+    }
+
     if (userInitiated) {
       haptic();
       track("schedule_date_change");
-      track("schedule_view");
     }
   }
 
   const originalLoadSchedule = loadSchedule;
-  loadSchedule = async function archiveAwareLoadSchedule(offset = state.dayOffset, quiet = false) {
+  loadSchedule = async function databaseTimelineLoadSchedule(offset = state.dayOffset, quiet = false) {
     try {
-      if (archive.group !== state.group || !archive.days.length) {
-        await loadArchiveForGroup(quiet);
+      const ready = await ensureTimelineForGroup();
+      if (!ready) {
+        $("scheduleView").innerHTML = state.group
+          ? `<div class="empty"><strong>Расписание отсутствует</strong>Для этой группы в базе пока нет ни одной даты.</div>`
+          : `<div class="empty"><strong>Группа не выбрана</strong>Выберите её один раз — дальше расписание будет открываться сразу.</div>`;
         return;
       }
 
       const requested = new Date();
       requested.setDate(requested.getDate() + Number(offset || 0));
-      const requestedDate = localDateString(requested);
-      const exact = archive.days.find(day => day.date === requestedDate);
-      if (exact) archive.selectedDate = exact.date;
-      renderSelectedArchiveDay();
+      const target = clampDate(localDateString(requested));
+
+      if (target < timeline.loadedStart || target > timeline.loadedEnd) {
+        setInitialWindow(target);
+        timeline.centerNextRender = true;
+      }
+      await loadExactDate(target, quiet, false);
     } catch (error) {
       $("scheduleView").innerHTML = `<div class="error-card"><strong>Не удалось загрузить расписание</strong>${esc(error.message)}</div>`;
     }
   };
+
+  function installDynamicStrip() {
+    const strip = $("dayStrip");
+    if (!strip || strip.dataset.dynamicDbStrip === "1") return;
+    strip.dataset.dynamicDbStrip = "1";
+    strip.addEventListener("scroll", handleStripScroll, {passive: true});
+    strip.addEventListener("click", event => {
+      const button = event.target.closest("[data-db-date]");
+      if (!button) return;
+      event.preventDefault();
+      event.stopPropagation();
+      loadExactDate(button.dataset.dbDate, false, true).catch(error => {
+        $("scheduleView").innerHTML = `<div class="error-card"><strong>Не удалось загрузить расписание</strong>${esc(error.message)}</div>`;
+      });
+    }, true);
+  }
 
   function installAdminAnalytics() {
     const panel = $("adminPanel");
@@ -275,6 +371,20 @@
     });
   }
 
+  function installAnalyticsStyles() {
+    if ($("miniappAnalyticsStyles")) return;
+    const style = document.createElement("style");
+    style.id = "miniappAnalyticsStyles";
+    style.textContent = `
+      .analytics-card{margin-top:12px;padding:14px;border-radius:16px;background:var(--bg)}
+      .analytics-list{display:grid;gap:7px;margin-top:10px}
+      .analytics-row{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:12px;align-items:center;padding:10px 0;border-bottom:1px solid var(--separator)}
+      .analytics-row:last-child{border-bottom:0}.analytics-name{font-size:13px;font-weight:680}.analytics-meta{font-size:11px;color:var(--muted);margin-top:2px}.analytics-count{font-size:14px;font-weight:800;color:var(--accent)}
+      .never-list{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}.never-chip{font-size:10px;padding:5px 7px;border-radius:999px;background:color-mix(in srgb,var(--danger) 10%,var(--surface));color:var(--danger)}
+    `;
+    document.head.appendChild(style);
+  }
+
   function renderAdminAnalytics(data, output) {
     const adoption = data.total_users ? Math.round(data.active_today / data.total_users * 1000) / 10 : 0;
     const used = (data.features || []).filter(item => item.uses > 0);
@@ -290,19 +400,32 @@
         <div class="analytics-list">
           ${used.length ? used.map(item => `
             <div class="analytics-row">
-              <div><div class="analytics-name">${esc(featureNames[item.feature] || item.feature)}</div><div class="analytics-meta">${item.unique_users} уник. пользователей${item.last_used_at ? ` · последнее ${esc(new Date(item.last_used_at).toLocaleString("ru-RU"))}` : ""}</div></div>
+              <div>
+                <div class="analytics-name">${esc(featureNames[item.feature] || item.feature)}</div>
+                <div class="analytics-meta">${item.unique_users} уник. пользователей${item.last_used_at ? ` · последнее ${esc(new Date(item.last_used_at).toLocaleString("ru-RU"))}` : ""}</div>
+              </div>
               <div class="analytics-count">${item.uses}</div>
             </div>
           `).join("") : `<div class="list-row-sub">Событий использования пока нет.</div>`}
         </div>
         <div class="section-label">Ни разу не использовались</div>
-        <div class="never-list">${never.length ? never.map(name => `<span class="never-chip">${esc(featureNames[name] || name)}</span>`).join("") : `<span class="list-row-sub">Все отслеживаемые функции уже использовались.</span>`}</div>
+        <div class="never-list">
+          ${never.length ? never.map(feature => `<span class="never-chip">${esc(featureNames[feature] || feature)}</span>`).join("") : `<span class="list-row-sub">Все отслеживаемые функции уже использовались.</span>`}
+        </div>
       </div>
     `;
   }
 
-  installArchiveControls();
+  function waitForProfileAndTrackOpen(attempt = 0) {
+    if (state.initData) {
+      track("miniapp_open");
+      return;
+    }
+    if (attempt < 20) setTimeout(() => waitForProfileAndTrackOpen(attempt + 1), 150);
+  }
+
+  installAnalyticsStyles();
+  installDynamicStrip();
   installAdminAnalytics();
-  buildDayStrip();
-  track("miniapp_open");
+  waitForProfileAndTrackOpen();
 })();
